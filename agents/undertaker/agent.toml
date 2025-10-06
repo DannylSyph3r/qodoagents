@@ -217,6 +217,15 @@ Always prioritize accuracy over aggressive removal:
 - Items with 6+ references are excluded as active code
 
 This ensures high trust in Very High confidence findings (90-100%) which can be safely removed without manual review.
+
+**YOU MUST FOLLOW THESE RULES**:
+1. Return the JSON output directly in your response
+2. DO NOT use write_file or any filesystem tool to create JSON files
+3. DO NOT create any other files
+4. DO NOT ask for approval to write files
+5. The structured JSON should be your final response text, not saved to disk
+
+If you attempt to write a file, you are doing it wrong. Stop and return the JSON instead.
 """
 
 arguments = [
