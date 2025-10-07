@@ -29,8 +29,10 @@ calculation_steps:
     no_dynamic_usage: "-0"
   
   step_6_clamp:
-    - "If score > 100: score = 100"
-    - "If score < 50: EXCLUDE item"
+    rule: "Calculate raw_score = base + ref_pts + age_pts + export_pts - dynamic_pts"
+    - "If raw_score > 100: final_score = 100"
+    - "If raw_score < 50: EXCLUDE item (active code)"
+    - "Else: final_score = raw_score"
 
 confidence_tiers:
   very_high:
@@ -56,31 +58,31 @@ special_cases:
 
 reasoning_format:
   template: "{ref_count} references. {days} days old. {export_status}. Score: {breakdown}"
-  breakdown: "{ref_pts} (refs) + {age_pts} (age) + {export_pts} (internal) - {dynamic_pts} (dynamic) = {final}%"
   
-  example:
-    input:
-      reference_count: 0
-      days_since_last_modified: 547
-      is_exported: false
-      potential_dynamic_usage: false
-    calculation: "50 + 50 (0 refs) + 30 (547 days) + 15 (internal) = 100"
-    output: "0 references. 547 days old. Internal function. Score: 50 (refs) + 30 (age) + 15 (internal) = 95%"
+  breakdown_format: "base + ref_pts (refs) + age_pts (age) + export_pts (internal/exported) - dynamic_pts (dynamic) = raw_score"
+  
+  clamping_note: "If raw_score > 100, append ' → clamped to 100%' to breakdown"
+  
+  calculation_rules:
+    - "Always show complete arithmetic: base + ref + age + export - dynamic = total"
+    - "Show raw_score before clamping"
+    - "If raw_score exceeds 100, explicitly show clamping: 'X → clamped to 100%'"
+    - "If no clamping needed, end with: 'X%'"
+    - "Verify math: sum of components must equal raw_score"
 
 safe_to_remove_flag:
   rule: "Use >= comparison (include threshold value)"
   formula: "safe_to_remove = (confidence_score >= min_confidence)"
   critical: "NEVER use > (would exclude threshold)"
-  examples:
-    - "min_confidence=75, score=75 → safe_to_remove=true"
-    - "min_confidence=75, score=74 → safe_to_remove=false"
 
 validation:
   checks:
     - "All scores between 50-100"
     - "All scores >= min_confidence"
     - "Tier matches score (90+=very_high, 75-89=high, 50-74=medium)"
-    - "Reasoning includes reference count, age, export status, score breakdown"
+    - "Reasoning shows complete calculation with all components"
+    - "Reasoning math is correct: verify sum matches score"
+    - "If score is 100 and raw > 100, reasoning must show clamping"
   
   tier_assignment:
     - "score >= 90 → very_high"

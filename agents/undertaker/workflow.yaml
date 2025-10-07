@@ -32,12 +32,32 @@ phase_2_historical_analysis:
   
   step_1_git_bulk_operation:
     critical: "Use ONE git command for all files, not per-file"
-    recommended: "git log --format='%ai' --name-only --diff-filter=M"
-    alternative: "git ls-files -z | xargs -0 -n 100 git log -1 --format='%ai' --"
-    - "Build map: file_path → last_modified_date"
-    - "For each element, lookup file in map"
-    - "Calculate days_since_last_modified"
-    - "Fallback: Use filesystem mtime if git fails"
+    
+    tool_usage: "Use shell tool to execute git command (shell MCP server is configured)"
+    
+    git_command: "git log --format='%ai' --name-only --diff-filter=M --all"
+    
+    parsing_process:
+      - "Split git output by newlines"
+      - "Lines matching pattern /^\\d{4}-\\d{2}-\\d{2}/ contain dates"
+      - "Extract YYYY-MM-DD from date lines (first 10 characters)"
+      - "Non-empty lines after dates (without '|') are file paths"
+      - "Build map: file_path → last_modified_date_string"
+    
+    date_calculation:
+      critical: "Calculate actual days difference from current date"
+      - "Get current date (today)"
+      - "For each file: parse last_modified_date_string to Date object"
+      - "Calculate: days = floor((today - last_modified_date) / milliseconds_per_day)"
+      - "Store actual calculated days_since_last_modified"
+      - "Store last_modified_date in YYYY-MM-DD format"
+    
+    fallback: "If git fails or file not in git history, use filesystem mtime with warning"
+    
+    validation:
+      - "Verify dates are reasonable (not negative, not absurdly high)"
+      - "If date parsing fails, use fallback"
+      - "Add warning if many files use fallback dates"
   
   step_2_dynamic_usage:
     patterns: ["eval(", "exec(", "Function(", "reflect", "__import__", "Class.forName"]
@@ -55,14 +75,19 @@ phase_3_confidence_scoring:
     - "Add age points: 180+ days=+30, 90-179 days=+20, <90 days=+10"
     - "Add export points: not exported=+15, exported=+0"
     - "Subtract dynamic penalty: potential_dynamic_usage=-25"
-    - "Clamp to 50-100 range"
+    - "Calculate raw_score = sum of all components"
+    - "Clamp: if raw_score > 100 then final_score = 100, else final_score = raw_score"
   
   tiers:
     - "90-100: very_high"
     - "75-89: high"
     - "50-74: medium"
   
-  reasoning_format: "{ref_count} references. {days} days old. {export_status}. Score: {breakdown}"
+  reasoning_generation:
+    format: "{ref_count} references. {days} days old. {export_status}. Score: {calculation}"
+    calculation_format: "base + ref_pts (refs) + age_pts (age) + export_pts (internal/exported) - dynamic_pts (dynamic) = raw_score"
+    clamping_rule: "If raw_score > 100, append ' → clamped to 100%'"
+    critical: "Verify arithmetic is correct - components must sum to raw_score"
 
 phase_4_output_generation:
   name: "Output Generation & Validation"
@@ -96,6 +121,9 @@ phase_4_output_generation:
       - "Tier counts match actual items in output"
       - "All scores >= min_confidence"
       - "All scores between 50-100"
+      - "All days_since_last_modified are realistic (not placeholder values)"
+      - "All reasoning text contains complete calculation"
+      - "Reasoning math is correct (verify sums)"
     action: "If validation fails: STOP and recount"
   
   step_5_return:
@@ -103,9 +131,11 @@ phase_4_output_generation:
     - "Match output_schema in agent.toml exactly"
 
 critical_rules:
-  - "Use >= for min_confidence (NOT >). Example: min_confidence=75 includes 75, 76, 77...100"
-  - "Use >= for min_age_days (NOT >). Example: min_age_days=90 includes 90, 91, 92... days"
+  - "Use >= for min_confidence (NOT >)"
+  - "Use >= for min_age_days (NOT >)"
   - "Execute separate searches, never pipe | in patterns"
   - "Use bulk git operations (one command for all files)"
+  - "Calculate ACTUAL days from dates, not placeholder values"
+  - "Verify scoring math is correct before returning"
   - "Validate counts match before returning"
   - "Return JSON directly, never create files"

@@ -16,15 +16,10 @@ critical_requirements:
   parameter_handling:
     min_confidence:
       rule: "Use >= comparison (greater than or equal to)"
-      examples:
-        - "min_confidence=50 → include 50, 51, 52...100"
-        - "min_confidence=75 → include 75, 76, 77...100"
       wrong: "NEVER use > (excludes threshold value)"
     
     min_age_days:
       rule: "Use >= comparison (greater than or equal to)"
-      examples:
-        - "min_age_days=90 → include 90, 91, 92... days"
       wrong: "NEVER use > (excludes threshold)"
   
   counting_validation:
@@ -36,6 +31,24 @@ critical_requirements:
       - "Verify: very_high + high + medium == total_dead_code_items"
       - "If mismatch: STOP and recount"
     mandatory: "DO NOT skip validation"
+  
+  date_accuracy:
+    rule: "Calculate ACTUAL days from git dates, not placeholder values"
+    critical:
+      - "Parse git log output to extract real modification dates"
+      - "Calculate days difference from current date to modification date"
+      - "NEVER use hardcoded or placeholder day values"
+      - "Verify dates are realistic (not negative, not absurdly high)"
+    fallback: "If git fails, use filesystem dates and add warning"
+  
+  scoring_accuracy:
+    rule: "Reasoning text must show correct arithmetic"
+    critical:
+      - "Calculate raw_score = base + ref_pts + age_pts + export_pts - dynamic_pts"
+      - "Verify sum: components must equal raw_score"
+      - "If raw_score > 100, show clamping: 'X → clamped to 100%'"
+      - "Reasoning must include complete calculation breakdown"
+    validation: "Before returning, verify all reasoning math is correct"
 
 cross_platform:
   shell_commands:
@@ -74,7 +87,9 @@ quality_assurance:
     - "All scores 50-100"
     - "All items meet min_confidence (>=)"
     - "Summary counts match actual items"
-    - "Reasoning text includes score breakdown"
+    - "Reasoning text includes score breakdown with correct math"
+    - "Days_since_last_modified calculated from actual dates, not placeholders"
+    - "All dates in YYYY-MM-DD format"
     - "safe_to_remove aligns with min_confidence"
   requirement: "Pass ALL validation checks before returning"
 
@@ -84,4 +99,5 @@ error_handling:
     parse_failures: "Skip file, add warning"
     missing_files: "Skip item, add warning"
     search_failures: "Report in warnings, continue with available data"
+    date_calculation_errors: "Use fallback date, add warning"
   principle: "Handle gracefully with clear messages"

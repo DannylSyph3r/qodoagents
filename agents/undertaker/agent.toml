@@ -9,20 +9,22 @@ You are The Undertaker, a dead code detection agent.
 
 SETUP:
 Read these files before starting (use filesystem tool):
-1. rules.yaml - Behavioral rules
+1. rules.yaml - Behavioral rules and validation requirements
 2. workflow.yaml - Execution phases (4 phases in order)
-3. scoring.yaml - Confidence scoring formula
+3. scoring.yaml - Confidence scoring formula with calculation rules
 
 WORKFLOW:
 Phase 1: Static Analysis - Find code elements, count references
-Phase 2: Historical Analysis - Get git dates (bulk operation), detect dynamic usage
-Phase 3: Confidence Scoring - Apply scoring formula from scoring.yaml
-Phase 4: Output Generation - Filter (>=), sort, validate counts, return JSON
+Phase 2: Historical Analysis - Use shell tool to execute git log, calculate actual days
+Phase 3: Confidence Scoring - Apply formula, verify math correctness
+Phase 4: Output Generation - Filter (>=), sort, validate all checks, return JSON
 
 CRITICAL RULES:
 - Use >= for min_confidence and min_age_days (NOT >)
-  Example: min_confidence=75 includes 75, 76, 77...100
-- Use bulk git: ONE command for all files (git log --format='%ai' --name-only)
+- Calculate ACTUAL days from git dates (not placeholder values)
+- Verify scoring math: components must sum correctly
+- Show clamping in reasoning when raw_score > 100
+- Use bulk git: ONE command for all files
 - Validate: very_high + high + medium = total_dead_code_items
 - Execute separate searches, never pipe | in patterns
 - Return JSON directly (NEVER use write_file)
@@ -48,88 +50,102 @@ arguments = [
     { name = "dry_run", type = "boolean", required = false, default = false,
       description = "Preview mode - show what would be removed without creating actual PR." },
     { name = "max_items", type = "number", required = false, default = 1000,
-      description = "Maximum dead code items to analyze per confidence tier." },
-    { name = "branch_prefix", type = "string", required = false, default = "undertaker",
-      description = "Prefix for PR branch names (e.g., 'undertaker-very-high-confidence')." }
+      description = "Maximum dead code items to analyze per confidence tier." }
 ]
 
 tools = ["filesystem", "git", "shell"]
 
 execution_strategy = "plan"
 
-output_schema = """
+mcpServers = """
 {
-    "type": "object",
-    "properties": {
-        "summary": {
-            "type": "object",
-            "description": "High-level overview of dead code findings",
-            "properties": {
-                "total_files_scanned": {"type": "number", "description": "Total number of source files analyzed"},
-                "total_dead_code_items": {"type": "number", "description": "Total number of dead code items found"},
-                "very_high_confidence": {"type": "number", "description": "Count of items with 90-100% confidence"},
-                "high_confidence": {"type": "number", "description": "Count of items with 75-89% confidence"},
-                "medium_confidence": {"type": "number", "description": "Count of items with 50-74% confidence"},
-                "estimated_lines_removable": {"type": "number", "description": "Estimated total lines of code that can be removed"},
-                "oldest_dead_code_days": {"type": "number", "description": "Age in days of the oldest dead code found"}
-            },
-            "required": ["total_files_scanned", "total_dead_code_items"]
-        },
-        "dead_code_items": {
-            "type": "array",
-            "description": "List of identified dead code items, sorted by confidence score (highest first)",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "identifier": {"type": "string", "description": "Name of the function/class/variable/import"},
-                    "type": {"type": "string", "enum": ["function", "class", "variable", "import", "unreachable_code"], "description": "Type of code element"},
-                    "location": {
-                        "type": "object",
-                        "description": "File location of the dead code",
-                        "properties": {
-                            "file": {"type": "string", "description": "File path relative to repository root"},
-                            "line_start": {"type": "number", "description": "Starting line number"},
-                            "line_end": {"type": "number", "description": "Ending line number"}
-                        },
-                        "required": ["file", "line_start", "line_end"]
-                    },
-                    "confidence_score": {"type": "number", "minimum": 50, "maximum": 100, "description": "Confidence that this is truly dead code (50-100)"},
-                    "confidence_tier": {"type": "string", "enum": ["very_high", "high", "medium"], "description": "Human-readable confidence tier"},
-                    "metrics": {
-                        "type": "object",
-                        "description": "Metrics used to calculate confidence score",
-                        "properties": {
-                            "reference_count": {"type": "number", "description": "Number of times this code is referenced elsewhere"},
-                            "days_since_last_modified": {"type": "number", "description": "Days since this code was last changed"},
-                            "last_modified_date": {"type": "string", "description": "ISO 8601 date of last modification"},
-                            "is_exported": {"type": "boolean", "description": "Whether this is exported/public API"}
-                        },
-                        "required": ["reference_count", "days_since_last_modified", "is_exported"]
-                    },
-                    "reasoning": {"type": "string", "description": "Human-readable explanation of why this is considered dead code and the confidence score"},
-                    "safe_to_remove": {"type": "boolean", "description": "Whether this item is safe to remove based on min_confidence threshold"}
-                },
-                "required": ["identifier", "type", "location", "confidence_score", "confidence_tier", "metrics", "reasoning", "safe_to_remove"]
-            }
-        },
-        "warnings": {
-            "type": "array",
-            "description": "Non-critical issues encountered during analysis (e.g., parse failures, permission errors)",
-            "items": {"type": "string"}
-        },
-        "pr_details": {
-            "type": "object",
-            "description": "Pull request information if create_pr was enabled",
-            "properties": {
-                "created": {"type": "boolean", "description": "Whether PR was successfully created"},
-                "url": {"type": "string", "description": "URL of created pull request"},
-                "items_included": {"type": "number", "description": "Number of dead code items included in PR"}
-            }
-        },
-        "success": {"type": "boolean", "description": "Whether the analysis completed successfully"}
-    },
-    "required": ["summary", "dead_code_items", "success"]
+    "shell": {
+      "command": "uvx",
+      "args": [
+        "mcp-shell-server"
+      ],
+      "env": {
+        "ALLOW_COMMANDS": "git,ls,cat,pwd,find,grep,awk,sed,date,echo,test,wc,head,tail,sort,uniq,basename,dirname,env"
+      }
+    }
 }
 """
 
-exit_expression = "success && (summary.very_high_confidence > 0 || summary.total_dead_code_items == 0)"
+[commands.undertaker.output_schema]
+type = "object"
+required = ["summary", "dead_code_items", "success"]
+additionalProperties = false
+
+[commands.undertaker.output_schema.properties]
+summary = { 
+    type = "object",
+    description = "High-level statistics about the analysis",
+    required = ["total_files_scanned", "total_dead_code_items", "very_high_confidence", "high_confidence", "medium_confidence"],
+    properties = {
+        total_files_scanned = { type = "number", description = "Number of source files analyzed" },
+        total_dead_code_items = { type = "number", description = "Total dead code items found" },
+        very_high_confidence = { type = "number", description = "Count of very high confidence items (90-100%)" },
+        high_confidence = { type = "number", description = "Count of high confidence items (75-89%)" },
+        medium_confidence = { type = "number", description = "Count of medium confidence items (50-74%)" },
+        estimated_lines_removable = { type = "number", description = "Estimated number of lines that can be removed" },
+        oldest_dead_code_days = { type = "number", description = "Age in days of the oldest dead code found" }
+    }
+}
+
+dead_code_items = {
+    type = "array",
+    description = "List of dead code items found, sorted by confidence score descending",
+    items = {
+        type = "object",
+        required = ["identifier", "type", "location", "confidence_score", "confidence_tier", "metrics", "reasoning", "safe_to_remove"],
+        properties = {
+            identifier = { type = "string", description = "Name of the dead code element" },
+            type = { type = "string", enum = ["function", "class", "variable", "interface", "type", "enum", "import", "unreachable_code"], description = "Type of code element" },
+            location = {
+                type = "object",
+                description = "File location of the dead code",
+                required = ["file", "line_start", "line_end"],
+                properties = {
+                    file = { type = "string", description = "File path relative to repository root" },
+                    line_start = { type = "number", description = "Starting line number" },
+                    line_end = { type = "number", description = "Ending line number" }
+                }
+            },
+            confidence_score = { type = "number", minimum = 50, maximum = 100, description = "Confidence that this is truly dead code (50-100)" },
+            confidence_tier = { type = "string", enum = ["very_high", "high", "medium"], description = "Human-readable confidence tier" },
+            metrics = {
+                type = "object",
+                description = "Metrics used to calculate confidence score",
+                required = ["reference_count", "days_since_last_modified", "last_modified_date", "is_exported"],
+                properties = {
+                    reference_count = { type = "number", description = "Number of times this code is referenced elsewhere" },
+                    days_since_last_modified = { type = "number", description = "Days since this code was last changed (calculated from actual dates)" },
+                    last_modified_date = { type = "string", description = "ISO 8601 date of last modification (YYYY-MM-DD)" },
+                    is_exported = { type = "boolean", description = "Whether this code is exported from its module" }
+                }
+            },
+            reasoning = { type = "string", description = "Explanation of confidence score with complete calculation breakdown" },
+            safe_to_remove = { type = "boolean", description = "Whether this item meets the min_confidence threshold" }
+        }
+    }
+}
+
+warnings = {
+    type = "array",
+    description = "Warnings or issues encountered during analysis",
+    items = { type = "string" }
+}
+
+pr_details = {
+    type = "object",
+    description = "Pull request information if create_pr is true",
+    properties = {
+        created = { type = "boolean", description = "Whether a PR was created" },
+        url = { type = "string", description = "URL to the created PR" },
+        items_included = { type = "number", description = "Number of items included in the PR" }
+    }
+}
+
+success = { type = "boolean", description = "Whether the analysis completed successfully" }
+
+exit_expression = "success"
