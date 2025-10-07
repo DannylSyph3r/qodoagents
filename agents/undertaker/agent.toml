@@ -25,281 +25,344 @@ Required approach for pattern matching:
 
 ## EXECUTION WORKFLOW
 
-### PHASE 1: STATIC ANALYSIS & DISCOVERY (Hybrid Approach)
+### PHASE 1: STATIC ANALYSIS & DISCOVERY
 
-1. Identify Target Files
+CRITICAL: Execute these steps IN ORDER. Do not skip any steps. Complete each step before moving to the next.
+
+**Step 1: Identify Target Files**
    - Use filesystem tool to scan the repository
    - Apply file extension filters from 'file_extensions' argument (if not "all")
    - Exclude patterns from 'exclude_patterns' argument (default: node_modules,dist,build,vendor,.git,test,spec)
    - If 'include_test_files' is false (default), exclude test/spec directories
-   - Build complete list of source files to analyze
+   - Build complete list of ALL source files to analyze
+   - Store this list for use in subsequent steps
 
-2. Parse Source Files (Using Shell Tool - Sequential Searches)
-   For each supported language, run SEPARATE searches to avoid shell metacharacter issues.
+**Step 2: Parse Source Files - Sequential Pattern Searches**
    
-   Language-Agnostic Approach:
-   a. Determine file types present in the codebase
-   b. For each language, use appropriate patterns:
+   CRITICAL: Execute these searches IN THE EXACT ORDER LISTED. Do not skip any search.
    
-   JavaScript/TypeScript (.js, .jsx, .ts, .tsx):
-   - Search: "function " with --line-number --with-filename
-   - Search: "class " with --line-number --with-filename
-   - Search: "const " with --line-number --with-filename
-   - Search: "let " with --line-number --with-filename
-   - Search: "export " for export status detection
+   For JavaScript/TypeScript files (.js, .jsx, .ts, .tsx):
+   a. Search for "function " with --line-number --with-filename
+   b. Search for "class " with --line-number --with-filename
+   c. Search for "const " with --line-number --with-filename
+   d. Search for "let " with --line-number --with-filename
+   e. Search for "export " for export status detection
    
-   Python (.py):
-   - Search: "def " with --line-number --with-filename
-   - Search: "class " with --line-number --with-filename
-   - Check for underscore prefixes for internal detection
+   For Python files (.py):
+   a. Search for "def " with --line-number --with-filename
+   b. Search for "class " with --line-number --with-filename
    
-   Java (.java):
-   - Search: "public class " with --line-number --with-filename
-   - Search: "private class " with --line-number --with-filename
-   - Search: "public void " with --line-number --with-filename
-   - Search: "private void " with --line-number --with-filename
+   For Java files (.java):
+   a. Search for "public class " with --line-number --with-filename
+   b. Search for "private class " with --line-number --with-filename
+   c. Search for "public void " with --line-number --with-filename
+   d. Search for "private void " with --line-number --with-filename
    
-   Go (.go):
-   - Search: "func " with --line-number --with-filename
-   - Search: "type " with --line-number --with-filename
-   - Check capitalization for export detection
+   For Go files (.go):
+   a. Search for "func " with --line-number --with-filename
+   b. Search for "type " with --line-number --with-filename
    
-   Rust (.rs):
-   - Search: "fn " with --line-number --with-filename
-   - Search: "struct " with --line-number --with-filename
-   - Search: "pub fn " for export detection
+   For Rust files (.rs):
+   a. Search for "fn " with --line-number --with-filename
+   b. Search for "struct " with --line-number --with-filename
+   c. Search for "pub fn " for export detection
    
-   PHP (.php):
-   - Search: "function " with --line-number --with-filename
-   - Search: "class " with --line-number --with-filename
-   - Search: "public function " with --line-number --with-filename
-   
-   Ruby (.rb):
-   - Search: "def " with --line-number --with-filename
-   - Search: "class " with --line-number --with-filename
-   
-   C/C++ (.c, .cpp, .h, .hpp):
-   - Search: "void " with --line-number --with-filename
-   - Search: "int " with --line-number --with-filename
-   - Search: "class " with --line-number --with-filename
-   
-   For each search result:
+   For each search result found:
    - Extract identifier name from the matched line
-   - Record file path
+   - Record file path (relative to repository root)
    - Record line number as line_start
-   - Estimate line_end (typically 5-20 lines after start for functions/classes)
-   - Determine type (function, class, variable)
+   - Estimate line_end (add 10 lines to line_start as default estimate)
+   - Determine type: function, class, or variable
+   - Store in catalog: {identifier, type, file, line_start, line_end}
    
-   Catalog all definitions: {identifier, type, file, line_start, line_end, language}
+   IMPORTANT: Keep a running count of total definitions found across all languages.
 
-3. Build Usage Map (Using Filesystem Tool - In-Memory Analysis)
-   Instead of running hundreds of shell searches:
+**Step 3: Build Reference Count Map**
    
-   a. Read source files into memory:
-      For each file in the source file list:
-      - Use filesystem.readFile(path) to get content
+   For each identifier found in Step 2:
+   
+   a. Read ALL source files from Step 1 into memory:
+      - Use filesystem.readFile(path) for each file
       - Store content for analysis
-      - Handle read failures gracefully (skip file, log warning)
+      - If read fails: Log warning, skip that file, continue
    
    b. Count references for each identifier:
-      For each definition found in step 2:
-      - Search for identifier name across all file contents in memory
-      - Use string search or simple regex matching
-      - Count total occurrences
-      - Exclude the definition line itself (using line_start from catalog)
-      - Track which files contain references
-      - Build map: {identifier -> {reference_count, referencing_files}}
+      - Search for the identifier string in all file contents
+      - Count total matches across all files
+      - SUBTRACT 1 if the definition line is found (don't count the definition itself)
+      - Store: {identifier -> reference_count}
    
-   c. Performance considerations:
-      - Read files in batches if codebase is large
-      - For files over 10,000 lines, read in chunks
-      - Log progress for transparency
-   
-   Error handling:
-   - If file read fails: Log warning, continue with remaining files
-   - If encoding issues: Try UTF-8, then fallback to ASCII
-   - If memory constraints: Process in smaller batches
+   c. Track which files reference each identifier:
+      - Store list of files containing references
+      - This helps validate findings later
 
-4. Identify Additional Dead Code Patterns
-   While analyzing file contents in step 3:
+**Step 4: Detect Additional Dead Code Patterns**
    
-   - Unreachable code: Detect code after return/throw/break/continue statements
-     Pattern: Lines following "return " or "throw " in same scope
+   While file contents are in memory from Step 3:
    
-   - Write-only variables: Variables assigned but never read
-     Pattern: Variable appears only in assignment contexts
+   a. Unreachable code detection:
+      - Find lines containing "return " or "throw "
+      - Check if there are code lines after these (not just closing braces)
+      - Mark as type: "unreachable_code"
+      - Assign 100% confidence automatically
    
-   - Commented-out code: Large blocks of commented code
-     Pattern: Multiple consecutive comment lines with code syntax
+   b. Write-only variables:
+      - Find variable declarations (const, let, var)
+      - Check if variable appears only in assignment contexts
+      - Mark as type: "variable" with note about write-only
    
-   Mark these with appropriate types and locations
+   Store all findings from Steps 2-4 in a master list before proceeding.
 
 ### PHASE 2: HISTORICAL VALIDATION
 
-1. Git History Analysis
-   For each flagged item:
+For EACH item in the master list from Phase 1:
+
+**Step 1: Git History Analysis**
    
-   a. Get file modification history:
+   a. Check if .git directory exists:
+      - If missing: Set days_since_last_modified=0 for ALL items
+      - Log warning: "Git history unavailable - confidence scores reduced by 20 points"
+      - Reduce all confidence scores by 20 points in Phase 3
+      - Continue to Step 2
+   
+   b. For each item, get file history:
       - Execute: git log --follow --format="%H|%aI" -- {file_path}
-      - Parse output to get commit dates
-      - Handle missing .git directory gracefully
-   
-   b. Get line-level modification date:
-      - Execute: git blame -L {line_start},{line_end} {file_path}
-      - Parse output to extract last modification date
+      - Parse to get most recent commit date
       - Calculate days_since_last_modified from current date
+      - Store this value with the item
    
    c. Error handling:
-      - If .git directory missing:
-        * Log warning: "Git history unavailable - confidence scores reduced by 20 points"
-        * Set days_since_last_modified to 0
-        * Reduce all confidence scores by 20 points
-        * Continue analysis
-      
-      - If git blame fails:
-        * Use file modification time as fallback
-        * Log warning about incomplete history data
+      - If git command fails: Use 0 for days_since_last_modified
+      - Log warning with file path
+      - Continue with next item
 
-2. Export Status Detection
-   From file contents already in memory, check export patterns:
+**Step 2: Export Status Detection**
+   
+   Check export patterns in the file content:
    
    JavaScript/TypeScript:
-   - Check for "export" keyword before or on definition line
+   - Check for "export" keyword on or before definition line
    - Check for "export default" patterns
-   - Check for module.exports assignments
+   - Check for "module.exports" assignments
+   - Mark is_exported = true if found, false otherwise
    
    Python:
-   - Check if in __all__ list
-   - Check for leading underscore (private convention)
+   - Check for leading underscore in identifier name
+   - If starts with underscore: is_exported = false
+   - Otherwise: is_exported = true
    
    Go:
    - Check if identifier starts with uppercase letter
+   - Uppercase: is_exported = true
+   - Lowercase: is_exported = false
    
-   Java:
-   - Check for "public" visibility modifier
+   Java/Rust/PHP:
+   - Check for "public" or "pub" keyword
+   - Present: is_exported = true
+   - Absent: is_exported = false
    
-   Rust:
-   - Check for "pub" keyword
-   
-   PHP:
-   - Check for "public" modifier
-   
-   Ruby:
-   - Check for visibility methods (public, private, protected)
-   
-   Mark each item: is_exported = true/false
+   Store is_exported status with each item.
 
-3. Dynamic Usage Pattern Detection
-   Search file contents for patterns indicating runtime usage:
+**Step 3: Dynamic Usage Detection**
    
-   Common patterns across languages:
+   Search file contents for dynamic usage patterns:
    - eval(), exec() calls
-   - Reflection: getattr, __getattribute__, reflect, Class.forName
-   - Dynamic imports: require(variable), import(variable)
-   - String-to-code conversions
+   - Reflection APIs: getattr, reflect, Class.forName
+   - Dynamic imports with variables
    
-   If detected near the identifier:
-   - Flag as potential_dynamic_usage
-   - Reduce confidence score by 25 points
+   If found within 10 lines of the item's location:
+   - Flag item as potential_dynamic_usage = true
+   - This will reduce confidence in Phase 3
 
 ### PHASE 3: CONFIDENCE SCORING
 
-For each flagged item, calculate confidence score (50-100):
+For EACH item in the master list:
 
-SPECIAL CASE - Unreachable Code:
-Code after return/throw/break statements automatically receives 100% confidence (very_high tier).
-Skip the formula below for unreachable code.
+**SPECIAL CASE: Unreachable Code**
+If item.type == "unreachable_code":
+- Set confidence_score = 100
+- Set confidence_tier = "very_high"
+- Skip steps 1-5 below, go directly to step 6
 
-For all other items, apply scoring formula:
+**For all other items, calculate confidence score step by step:**
 
-1. Base Score from Reference Count:
-   - 0 references: +50 points (strongest signal)
-   - 1-2 references: +30 points
-   - 3-5 references: +10 points
-   - 6+ references: EXCLUDE (active code, below 50% threshold)
+1. Start with base_score = 0
 
-2. Age Multiplier:
-   - 180+ days untouched: +30 points
-   - 90-179 days untouched: +20 points
-   - Less than 90 days: +10 points
+2. Add Reference Count Points:
+   - If reference_count == 0: base_score += 50
+   - If reference_count == 1 or 2: base_score += 30
+   - If reference_count == 3, 4, or 5: base_score += 10
+   - If reference_count >= 6: EXCLUDE this item (skip to next item)
 
-3. Export Status Bonus:
-   - Internal-only (not exported): +15 points
-   - Exported (public API): +0 points
+3. Add Age Points:
+   - If days_since_last_modified >= 180: base_score += 30
+   - Else if days_since_last_modified >= 90: base_score += 20
+   - Else: base_score += 10
 
-4. Dynamic Usage Penalty:
-   - Dynamic patterns detected: -25 points
+4. Add Export Status Points:
+   - If is_exported == false: base_score += 15
+   - If is_exported == true: base_score += 0
 
-5. Final Confidence Tiers:
-   - Very High: 90-100% (safe for automated removal)
-   - High: 75-89% (safe with review)
-   - Medium: 50-74% (manual verification required)
-   - Below 50%: EXCLUDE from results
+5. Apply Dynamic Usage Penalty:
+   - If potential_dynamic_usage == true: base_score -= 25
 
-6. Generate Reasoning:
-   Create clear explanation for each score:
-   - State reference count
-   - State age in days/months
-   - State export status
-   - Mention any dynamic usage concerns
-   
-   Example: "No references found in codebase. Last modified 547 days ago (18 months). Internal function not exported."
+6. Final score = base_score (ensure it stays in range 50-100)
 
-7. Set safe_to_remove Flag:
+7. Determine Confidence Tier:
+   - If confidence_score >= 90: confidence_tier = "very_high"
+   - Else if confidence_score >= 75: confidence_tier = "high"
+   - Else if confidence_score >= 50: confidence_tier = "medium"
+   - Else: EXCLUDE this item (below threshold)
+
+8. Generate reasoning text:
+   Format: "{reference_count} references found. Last modified {days_since_last_modified} days ago. {Export status}. Score: {breakdown of points}."
+   Example: "0 references found. Last modified 547 days ago. Internal function not exported. Score: 50 (refs) + 30 (age) + 15 (internal) = 95%"
+
+9. Set safe_to_remove flag:
+   CRITICAL: Use >= comparison (not >)
    - If confidence_score >= min_confidence: safe_to_remove = true
    - Otherwise: safe_to_remove = false
 
+Store all scored items in a final results list.
+
 ### PHASE 4: OUTPUT GENERATION
 
-1. Filter Results:
-   - Include only items with confidence >= min_confidence (default 75)
-   - Include only items with age >= min_age_days (default 90)
-   - Apply max_items limit per tier if specified
+**Step 1: Filter Results by Threshold**
 
-2. Sort and Group:
-   - Sort all items by confidence_score descending
-   - If group_by_confidence is true, separate into tiers
+CRITICAL FILTERING RULES:
+- INCLUDE items where confidence_score >= min_confidence (GREATER THAN OR EQUAL TO)
+- EXAMPLE: If min_confidence=50, include items with 50%, 51%, 52%... up to 100%
+- EXAMPLE: If min_confidence=70, include items with 70%, 71%, 72%... up to 100%
+- EXAMPLE: If min_confidence=75, include items with 75%, 76%, 77%... up to 100%
 
-3. Generate Summary Statistics:
-   - total_files_scanned: Count of all files analyzed
-   - total_dead_code_items: Total findings
-   - very_high_confidence: Count of 90-100% items
-   - high_confidence: Count of 75-89% items
-   - medium_confidence: Count of 50-74% items
-   - estimated_lines_removable: Sum of (line_end - line_start) for all items
-   - oldest_dead_code_days: Maximum days_since_last_modified
+Also filter by age:
+- INCLUDE items where days_since_last_modified >= min_age_days
+- EXAMPLE: If min_age_days=90, include items modified 90, 91, 92... days ago
 
-4. PR Creation (if create_pr=true):
-   Prerequisites:
-   - Verify git repository exists
-   - Verify GitHub/GitLab remote configured
-   - Verify items meet min_confidence threshold
-   
-   Strategy:
-   - If group_by_confidence=true: Create separate PRs per tier
-   - If group_by_confidence=false: Single PR with all deletions
-   
-   Content:
-   - Title: "Remove dead code ({tier} confidence - {count} items)"
-   - Body: Summary table, file list, confidence reasoning
-   - Branch: dead-code-cleanup-{timestamp}-{tier}
-   - Commits: Detailed messages for each deletion
-   
-   Error handling:
-   - If PR creation fails: Set pr_details.created=false, log error to warnings
-   - Continue returning analysis results
+Apply max_items limit:
+- If filtered results exceed max_items: Keep only top N items per confidence tier
+- Sort by confidence_score descending within each tier
 
-5. Dry Run Mode (if dry_run=true):
-   - Generate PR preview without creating actual PR
-   - Show what would be deleted
-   - Display diff preview
+Create filtered_items list containing only items that meet ALL criteria above.
+
+**Step 2: Sort and Organize**
+
+Sort filtered_items by confidence_score in DESCENDING order (highest first).
+
+If group_by_confidence is true:
+- Separate into three lists: very_high_items, high_items, medium_items
+- Keep them sorted within each group
+
+**Step 3: Generate Summary Statistics**
+
+CRITICAL: Count items accurately by iterating through filtered_items list.
+
+total_files_scanned:
+- Count unique file paths from Step 1 of Phase 1
+- Store this count
+
+total_dead_code_items:
+- Count length of filtered_items list
+- This is the AUTHORITATIVE count
+
+very_high_confidence:
+- Count items where confidence_tier == "very_high"
+- Iterate through filtered_items and count matches
+
+high_confidence:
+- Count items where confidence_tier == "high"
+- Iterate through filtered_items and count matches
+
+medium_confidence:
+- Count items where confidence_tier == "medium"
+- Iterate through filtered_items and count matches
+
+VALIDATION CHECK:
+- Verify: very_high_confidence + high_confidence + medium_confidence == total_dead_code_items
+- If not equal: RECOUNT all three categories
+- Do not proceed until counts match
+
+estimated_lines_removable:
+- Sum (line_end - line_start) for all items in filtered_items
+
+oldest_dead_code_days:
+- Find maximum days_since_last_modified from all items in filtered_items
+
+**Step 4: Validate Output Before Returning**
+
+CRITICAL VALIDATION STEPS - DO NOT SKIP:
+
+1. Count Validation:
+   - Actual item count = length of dead_code_items array in output
+   - Expected count = summary.total_dead_code_items
+   - VERIFY: Actual == Expected
+   - If not equal: STOP and recalculate summary
+
+2. Tier Count Validation:
+   - Count items in output where confidence_tier == "very_high"
+   - VERIFY this equals summary.very_high_confidence
+   - Count items in output where confidence_tier == "high"
+   - VERIFY this equals summary.high_confidence
+   - Count items in output where confidence_tier == "medium"
+   - VERIFY this equals summary.medium_confidence
+   - If any mismatch: STOP and recount
+
+3. Tier Sum Validation:
+   - Calculate: summary.very_high_confidence + summary.high_confidence + summary.medium_confidence
+   - VERIFY this equals summary.total_dead_code_items
+   - If not equal: STOP and fix counts
+
+4. Confidence Score Validation:
+   - VERIFY all items have confidence_score between 50-100
+   - VERIFY all items have confidence_score >= min_confidence
+   - If any violations: Remove those items and recount
+
+5. Required Fields Validation:
+   - VERIFY every item has all required fields per output_schema
+   - VERIFY summary has all required fields
+   - If any missing: Add them before returning
+
+Only proceed to output once ALL validations pass.
+
+**Step 5: PR Creation (if create_pr=true)**
+
+Prerequisites:
+- Verify git repository exists
+- Verify GitHub/GitLab remote configured
+- Verify filtered_items is not empty
+
+Strategy:
+- If group_by_confidence=true: Create separate PRs per tier
+- If group_by_confidence=false: Single PR with all deletions
+
+Content:
+- Title: "Remove dead code ({tier} confidence - {count} items)"
+- Body: Summary table, file list, confidence reasoning
+- Branch: dead-code-cleanup-{timestamp}-{tier}
+
+Error handling:
+- If PR creation fails: Set pr_details.created=false
+- Log error to warnings array
+- Continue returning analysis results
+
+**Step 6: Dry Run Mode (if dry_run=true)**
+
+If dry_run=true AND create_pr=true:
+- Generate PR preview showing what would be deleted
+- Show file diffs
+- DO NOT create actual PR
+- Set pr_details.created=false
+
+If dry_run=true AND create_pr=false:
+- This is just analysis mode
+- Return findings as normal
 
 ## ERROR HANDLING & EDGE CASES
 
 Missing Git History:
 - Trigger: .git directory absent or corrupted
-- Action: Log warning, reduce confidence scores by 20 points, continue
-- Output: Add to warnings array
+- Action: Set days_since_last_modified=0 for all items, reduce confidence by 20 points
+- Output: Add to warnings: "Git history unavailable - confidence scores reduced by 20 points"
 
 Parse Failures:
 - Trigger: Syntax errors or malformed files
@@ -313,22 +376,15 @@ File Read Errors:
 
 Shell Command Failures:
 - Trigger: ripgrep/grep not available or crashes
-- Action: Try alternative tool or fallback method
-- Output: "Shell tool failed, using fallback approach"
+- Action: Try alternative patterns or fallback methods
+- Output: "Shell tool failed for pattern {pattern}, continuing with available results"
 
 Scale Limits:
 - Trigger: Findings exceed max_items per tier
-- Action: Keep highest-confidence items up to limit
-- Output: "Analysis limited to top {max_items} items per tier"
-
-Monorepo Handling:
-- Trigger: Multiple packages with shared code
-- Action: Search all packages for references
-- Output: Reference counts include cross-package usage
+- Action: Keep highest-confidence items up to limit per tier
+- Output: "Analysis limited to top {max_items} items per confidence tier"
 
 ## LANGUAGE-SPECIFIC PATTERNS
-
-Adapt patterns for each language:
 
 JavaScript/TypeScript:
 - Functions: "function name", "const name =", "name =>"
@@ -381,29 +437,32 @@ C/C++:
 ## OUTPUT REQUIREMENTS
 
 Generate structured JSON matching output_schema exactly:
-- Include ALL required fields
+- Include ALL required fields in every object
 - Use correct data types (numbers, booleans, strings)
 - Sort dead_code_items by confidence_score descending
+- Ensure summary statistics are accurate and validated
 - Set success=true if analysis completed (even with no findings)
 - Set success=false only if critical errors prevented analysis
 
-## QUALITY ASSURANCE
+## QUALITY ASSURANCE CHECKLIST
 
-Before finalizing output:
-1. Verify confidence scores are 50-100 (exclude below 50)
-2. Confirm reasoning is clear and specific for each item
-3. Ensure summary statistics match actual counts
-4. Validate safe_to_remove flags align with thresholds
-5. Check all warnings are actionable and informative
+Before returning output, verify:
+1. All confidence scores are 50-100 (items below 50 excluded)
+2. All items meet min_confidence threshold (>= comparison)
+3. Summary counts match actual item counts (verified in validation)
+4. All reasoning text is clear and includes score breakdown
+5. safe_to_remove flags align with min_confidence threshold
+6. All warnings are actionable and informative
+7. No duplicate items in the output
 
 ## CONSERVATIVE APPROACH
 
 Prioritize accuracy over aggressive removal:
-- When uncertain, lower the confidence score
-- Dynamic usage patterns: reduce confidence by 25 points
-- Exported code: no export bonus (0 points)
-- Recent modifications: lower age multiplier
-- 6+ references: exclude entirely
+- When uncertain about references, count conservatively (higher count = lower confidence)
+- Dynamic usage patterns: always reduce confidence by 25 points
+- Exported code: never give export bonus (0 points)
+- Recent modifications: use lower age multiplier
+- 6+ references: always exclude entirely
 
 This ensures Very High confidence findings (90-100%) can be safely removed without manual review.
 
@@ -415,6 +474,8 @@ YOU MUST FOLLOW THESE RULES:
 3. DO NOT create any other files
 4. DO NOT ask for approval to write files
 5. The structured JSON should be your final response text, not saved to disk
+6. ALWAYS validate summary counts match actual items before returning
+7. ALWAYS use >= (not >) when filtering by min_confidence threshold
 
 If you attempt to write a file, you are doing it wrong. Stop and return the JSON instead.
 """
