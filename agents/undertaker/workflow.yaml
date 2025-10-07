@@ -1,0 +1,353 @@
+# UNDERTAKER AGENT - EXECUTION WORKFLOW
+# Follow these phases IN ORDER - do not skip or reorder
+
+workflow:
+  description: "Step-by-step execution process for dead code detection"
+  
+  phase_1_static_analysis:
+    name: "Static Analysis & Discovery"
+    description: "Identify target files and parse source code to find potential dead code"
+    
+    step_1_identify_files:
+      description: "Build list of all source files to analyze"
+      actions:
+        - "Use filesystem tool to scan the repository"
+        - "Apply file extension filters from 'file_extensions' argument"
+        - "If file_extensions == 'all': scan for all supported language extensions"
+        - "Exclude patterns from 'exclude_patterns' argument"
+        - "If include_test_files == false: exclude test/spec directories"
+        - "Build complete list of ALL source files to analyze"
+        - "Store this list for use in subsequent steps"
+      
+      output: "List of file paths to analyze"
+    
+    step_2_parse_source_files:
+      description: "Execute sequential pattern searches for each language"
+      critical_rule: "NEVER use pipe | in regex patterns - execute separate searches"
+      
+      javascript_typescript:
+        file_extensions: [".js", ".jsx", ".ts", ".tsx"]
+        searches:
+          - pattern: "function "
+            flags: "--line-number --with-filename"
+            description: "Find function declarations"
+          - pattern: "class "
+            flags: "--line-number --with-filename"
+            description: "Find class declarations"
+          - pattern: "const "
+            flags: "--line-number --with-filename"
+            description: "Find const declarations"
+          - pattern: "let "
+            flags: "--line-number --with-filename"
+            description: "Find let declarations"
+          - pattern: "export "
+            flags: "--line-number --with-filename"
+            description: "Detect export status"
+      
+      python:
+        file_extensions: [".py"]
+        searches:
+          - pattern: "def "
+            flags: "--line-number --with-filename"
+            description: "Find function definitions"
+          - pattern: "class "
+            flags: "--line-number --with-filename"
+            description: "Find class definitions"
+      
+      java:
+        file_extensions: [".java"]
+        searches:
+          - pattern: "public class "
+            flags: "--line-number --with-filename"
+          - pattern: "private class "
+            flags: "--line-number --with-filename"
+          - pattern: "public void "
+            flags: "--line-number --with-filename"
+          - pattern: "private void "
+            flags: "--line-number --with-filename"
+      
+      go:
+        file_extensions: [".go"]
+        searches:
+          - pattern: "func "
+            flags: "--line-number --with-filename"
+          - pattern: "type "
+            flags: "--line-number --with-filename"
+      
+      rust:
+        file_extensions: [".rs"]
+        searches:
+          - pattern: "fn "
+            flags: "--line-number --with-filename"
+          - pattern: "struct "
+            flags: "--line-number --with-filename"
+          - pattern: "pub fn "
+            flags: "--line-number --with-filename"
+      
+      output: "List of all code elements found with their locations"
+    
+    step_3_count_references:
+      description: "For each code element found, count how many times it's referenced"
+      method: "Search entire codebase for the identifier name"
+      actions:
+        - "For each identifier found in step 2"
+        - "Search all files for that identifier name"
+        - "Exclude the definition line itself from count"
+        - "Store reference_count for each element"
+      
+      edge_cases:
+        - "Common names (like 'test', 'data'): Be conservative, count may be high"
+        - "Dynamic usage: Comments or strings mentioning name don't count as references"
+        - "Import statements: Count as references if present"
+      
+      output: "Reference count for each code element"
+    
+    step_4_detect_unreachable_code:
+      description: "Find code that appears after return/throw statements"
+      patterns:
+        - "Code after return statement in function"
+        - "Code after throw statement"
+        - "Code in impossible conditional branches (if false, etc)"
+      
+      confidence: "Unreachable code automatically receives 100% confidence"
+      
+      output: "List of unreachable code blocks"
+  
+  phase_2_historical_analysis:
+    name: "Historical Analysis"
+    description: "Use git history to determine when code was last modified"
+    
+    step_1_get_last_modification:
+      description: "For each code element, find when it was last changed"
+      tool: "Use shell tool to execute git commands (git is in ALLOW_COMMANDS)"
+      git_command: "git log -1 --format='%ai' -- <file_path>"
+      actions:
+        - "For each code element from Phase 1"
+        - "Use shell tool to execute: git log -1 --format='%ai' -- <file_path>"
+        - "Parse the date from command output"
+        - "Calculate days_since_last_modified from today's date"
+        - "Store last_modified_date in ISO 8601 format"
+      
+      error_handling:
+        - "If git command fails: Add warning to warnings array"
+        - "If git history unavailable: Use filesystem modification time as fallback"
+        - "If file doesn't exist: Skip this item and add warning"
+      
+      output: "Modification dates and ages for all elements"
+    
+    step_2_check_export_status:
+      description: "Determine if code is exported/public"
+      checks:
+        javascript_typescript:
+          - "Check if line contains 'export' keyword"
+          - "Check if function/class is exported in separate export statement"
+        python:
+          - "Check if defined in __all__"
+          - "Check if name starts with underscore (private convention)"
+        java:
+          - "Check visibility modifier (public/private/protected)"
+        go:
+          - "Check if name starts with uppercase (exported in Go)"
+        rust:
+          - "Check for 'pub' keyword"
+      
+      output: "is_exported boolean for each element"
+    
+    step_3_detect_dynamic_usage:
+      description: "Look for patterns suggesting dynamic code execution"
+      patterns:
+        javascript_typescript: ["eval(", "Function(", "require(variable", "import(variable"]
+        python: ["eval(", "exec(", "getattr(", "__import__"]
+        java: ["Class.forName", "Method.invoke", "reflect"]
+        go: ["reflect."]
+        rust: ["dyn ", "Box<dyn"]
+      
+      actions:
+        - "Search files for dynamic usage patterns"
+        - "If patterns found near code element: mark potential_dynamic_usage = true"
+        - "This will reduce confidence score by 25 points"
+      
+      output: "Dynamic usage flags for each element"
+  
+  phase_3_confidence_scoring:
+    name: "Confidence Scoring"
+    description: "Calculate confidence scores using scoring.yaml methodology"
+    
+    reference: "See scoring.yaml for complete scoring rules"
+    
+    critical_rules:
+      - "Follow scoring formula exactly as specified in scoring.yaml"
+      - "Use >= comparison when filtering by min_confidence"
+      - "Exclude items with 6+ references (active code)"
+      - "Apply all penalties and bonuses as specified"
+      - "Generate clear reasoning text with score breakdown"
+    
+    output: "Scored items with confidence_score, confidence_tier, reasoning"
+  
+  phase_4_output_generation:
+    name: "Output Generation & Validation"
+    description: "Filter, sort, validate, and format the final output"
+    
+    step_1_filter_by_threshold:
+      description: "Apply user-specified thresholds"
+      
+      confidence_filtering:
+        rule: "INCLUDE items where confidence_score >= min_confidence"
+        critical: "Use >= (greater than or equal to), NOT >"
+        examples:
+          - condition: "min_confidence = 50"
+            include: "Items with scores 50, 51, 52... 100"
+          - condition: "min_confidence = 70"
+            include: "Items with scores 70, 71, 72... 100"
+          - condition: "min_confidence = 75"
+            include: "Items with scores 75, 76, 77... 100"
+      
+      age_filtering:
+        rule: "INCLUDE items where days_since_last_modified >= min_age_days"
+        critical: "Use >= (greater than or equal to), NOT >"
+        examples:
+          - condition: "min_age_days = 90"
+            include: "Items modified 90, 91, 92... days ago"
+          - condition: "min_age_days = 180"
+            include: "Items modified 180, 181, 182... days ago"
+      
+      max_items_limiting:
+        rule: "If filtered results exceed max_items"
+        action: "Keep only top N items per confidence tier"
+        sorting: "Sort by confidence_score descending within each tier"
+      
+      output: "filtered_items list containing items meeting ALL criteria"
+    
+    step_2_sort_and_organize:
+      description: "Order items for output"
+      actions:
+        - "Sort filtered_items by confidence_score in DESCENDING order (highest first)"
+        - "If group_by_confidence == true:"
+        - "  Separate into: very_high_items, high_items, medium_items"
+        - "  Keep items sorted within each group"
+      
+      output: "Sorted and optionally grouped items"
+    
+    step_3_generate_summary:
+      description: "Calculate summary statistics"
+      critical: "Count items accurately by iterating through filtered_items list"
+      
+      calculations:
+        total_files_scanned:
+          source: "Count unique file paths from Phase 1 Step 1"
+          method: "Store this count during file identification"
+        
+        total_dead_code_items:
+          source: "Length of filtered_items list"
+          critical: "This is the AUTHORITATIVE count"
+        
+        very_high_confidence:
+          method: "Count items where confidence_tier == 'very_high'"
+          action: "Iterate through filtered_items and count matches"
+        
+        high_confidence:
+          method: "Count items where confidence_tier == 'high'"
+          action: "Iterate through filtered_items and count matches"
+        
+        medium_confidence:
+          method: "Count items where confidence_tier == 'medium'"
+          action: "Iterate through filtered_items and count matches"
+        
+        validation_check:
+          rule: "very_high_confidence + high_confidence + medium_confidence == total_dead_code_items"
+          on_failure: "RECOUNT all three categories"
+          requirement: "Do not proceed until counts match"
+        
+        estimated_lines_removable:
+          formula: "Sum of (line_end - line_start) for all items in filtered_items"
+        
+        oldest_dead_code_days:
+          method: "Find maximum days_since_last_modified from all items in filtered_items"
+    
+    step_4_validate_output:
+      description: "CRITICAL validation before returning results"
+      critical: "DO NOT SKIP THESE CHECKS"
+      
+      validations:
+        count_validation:
+          check: "Actual item count == summary.total_dead_code_items"
+          method:
+            - "actual_count = length of dead_code_items array in output"
+            - "expected_count = summary.total_dead_code_items"
+            - "VERIFY: actual_count == expected_count"
+          on_failure: "STOP and recalculate summary"
+        
+        tier_count_validation:
+          check: "Each tier count matches actual items"
+          method:
+            - "Count items where confidence_tier == 'very_high'"
+            - "VERIFY equals summary.very_high_confidence"
+            - "Count items where confidence_tier == 'high'"
+            - "VERIFY equals summary.high_confidence"
+            - "Count items where confidence_tier == 'medium'"
+            - "VERIFY equals summary.medium_confidence"
+          on_failure: "STOP and recount"
+        
+        tier_sum_validation:
+          check: "Sum of tier counts equals total"
+          formula: "very_high + high + medium == total_dead_code_items"
+          on_failure: "STOP and fix counts"
+        
+        score_validation:
+          checks:
+            - "All items have confidence_score between 50-100"
+            - "All items have confidence_score >= min_confidence"
+          on_failure: "Remove violating items and recount"
+        
+        required_fields_validation:
+          checks:
+            - "Every item has all required fields per output_schema"
+            - "Summary has all required fields"
+          on_failure: "Add missing fields before returning"
+      
+      proceed_only_when: "ALL validations pass"
+    
+    step_5_return_json:
+      description: "Return the final JSON output"
+      critical_rules:
+        - "Return JSON directly in your response text"
+        - "DO NOT use write_file tool"
+        - "DO NOT create any files"
+        - "DO NOT ask for approval"
+      
+      format: "Match output_schema exactly as defined in agent.toml"
+
+language_specific_patterns:
+  description: "Reference guide for parsing different languages"
+  
+  javascript_typescript:
+    functions: "function name(...)"
+    classes: "class Name"
+    constants: "const name ="
+    exports: "export keyword, export { name }"
+    dynamic: "eval(), Function(), dynamic imports"
+  
+  python:
+    functions: "def name(...):"
+    classes: "class Name:"
+    exports: "__all__ list"
+    visibility: "Underscore prefix for private"
+    dynamic: "eval(), exec(), getattr(), __import__"
+  
+  java:
+    functions: "type name(...)"
+    classes: "class Name"
+    visibility: "public, private, protected keywords"
+    dynamic: "reflection APIs, Class.forName"
+  
+  go:
+    functions: "func name(...)"
+    types: "type Name"
+    exports: "Uppercase first letter"
+    dynamic: "reflect package"
+  
+  rust:
+    functions: "fn name(...)"
+    structs: "struct Name"
+    exports: "pub keyword"
+    dynamic: "dyn trait objects"
