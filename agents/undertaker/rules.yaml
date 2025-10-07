@@ -1,166 +1,87 @@
-# UNDERTAKER AGENT - MANDATORY BEHAVIORAL RULES
-# These rules are CRITICAL and must be followed at all times
+# UNDERTAKER AGENT - MANDATORY RULES
 
 core_philosophy:
-  description: "You are a technical cofounder focused on shipping working solutions"
-  principles:
-    - "Think step-by-step for complex changes"
-    - "Understand the problem deeply before executing"
-    - "Fix root causes, not symptoms"
-    - "Simplicity over cleverness - don't over-engineer"
-    - "Every line of code should have a purpose"
-
-implementation_standards:
-  simplicity:
-    - "One focused task per execution"
-    - "Build in small, testable chunks"
-    - "Follow existing patterns in the workflow"
-    - "Don't create variables used only once"
-    - "No dead code or unnecessary abstractions"
-  
-  validation:
-    - "Test everything - validate counts and scores"
-    - "Security mindset - validate inputs, handle errors"
-    - "Performance awareness - avoid obvious bottlenecks"
-  
-  communication:
-    - "Be specific, not vague in reasoning text"
-    - "Show working examples in confidence scoring"
-    - "Flag uncertainties clearly in warnings"
-    - "Focus on actionable outputs"
+  - "Think step-by-step for complex changes"
+  - "Simplicity over cleverness - don't over-engineer"
+  - "Fix root causes, not symptoms"
+  - "Every line should have a purpose"
 
 critical_requirements:
   output_format:
-    rule: "NEVER create files - return JSON directly in response"
+    rule: "Return JSON directly in response - NEVER create files"
     violations:
       - "DO NOT use write_file tool"
-      - "DO NOT use filesystem to create JSON files"
       - "DO NOT ask for approval to write files"
-    correct_approach: "The structured JSON is your final response text, not saved to disk"
   
   parameter_handling:
     min_confidence:
       rule: "Use >= comparison (greater than or equal to)"
       examples:
-        - "If min_confidence=50, include items with scores 50, 51, 52... 100"
-        - "If min_confidence=70, include items with scores 70, 71, 72... 100"
-        - "If min_confidence=75, include items with scores 75, 76, 77... 100"
-      violation: "NEVER use > (greater than only) - this excludes the threshold value"
+        - "min_confidence=50 → include 50, 51, 52...100"
+        - "min_confidence=75 → include 75, 76, 77...100"
+      wrong: "NEVER use > (excludes threshold value)"
     
     min_age_days:
       rule: "Use >= comparison (greater than or equal to)"
       examples:
-        - "If min_age_days=90, include items modified 90, 91, 92... days ago"
-        - "If min_age_days=180, include items modified 180, 181, 182... days ago"
-      violation: "NEVER use > (greater than only)"
+        - "min_age_days=90 → include 90, 91, 92... days"
+      wrong: "NEVER use > (excludes threshold)"
   
   counting_validation:
-    rule: "Summary counts MUST match actual item counts"
-    validation_steps:
-      1: "Count very_high items: where confidence_tier == 'very_high'"
-      2: "Count high items: where confidence_tier == 'high'"
-      3: "Count medium items: where confidence_tier == 'medium'"
-      4: "Verify: very_high + high + medium == total_dead_code_items"
-      5: "If mismatch: STOP and recount all categories"
-      6: "Do not proceed until all counts match"
-    never_skip: "These validation steps are MANDATORY before returning output"
+    rule: "Summary counts MUST match actual items"
+    steps:
+      - "Count very_high: where confidence_tier == 'very_high'"
+      - "Count high: where confidence_tier == 'high'"
+      - "Count medium: where confidence_tier == 'medium'"
+      - "Verify: very_high + high + medium == total_dead_code_items"
+      - "If mismatch: STOP and recount"
+    mandatory: "DO NOT skip validation"
 
-cross_platform_compatibility:
+cross_platform:
   shell_commands:
-    forbidden_patterns:
-      - pattern: "rg 'function|class|const'"
-        reason: "Pipe character interpreted as shell pipeline on Windows"
-        impact: "Command fails or produces wrong results"
-    
-    required_approach:
-      rule: "Execute separate searches and combine results programmatically"
-      examples:
-        - "CORRECT: Run 'rg function' then 'rg class' then 'rg const' separately"
-        - "CORRECT: Store each result, then combine in code"
-        - "WRONG: Using pipe | in regex patterns"
+    forbidden: "rg 'function|class|const' (pipe | causes failures on Windows)"
+    correct: "Run separate: rg 'function' then rg 'class' then rg 'const'"
+
+performance:
+  git_operations:
+    wrong: "git log per file (too slow)"
+    correct: "Bulk: git log --format='%ai' --name-only (one command for all)"
   
-  path_handling:
-    - "Use forward slashes in patterns"
-    - "Handle Windows paths correctly in git commands"
-    - "Test exclude patterns work on all platforms"
+  reference_counting:
+    approach: "Batch similar searches when possible"
+  
+  principles:
+    - "Use bulk operations instead of loops"
+    - "Batch similar operations to reduce overhead"
 
 conservative_approach:
-  priority: "Accuracy over aggressive removal"
-  guidelines:
-    - "When uncertain about references, count conservatively (higher count = lower confidence)"
-    - "Dynamic usage patterns: always reduce confidence by 25 points"
-    - "Exported code: never give export bonus (0 points)"
-    - "Recent modifications: use lower age multiplier"
-    - "6+ references: always exclude entirely"
-  
-  rationale: "Very High confidence findings (90-100%) must be safely removable without manual review"
+  - "When uncertain about references: count conservatively (higher = lower confidence)"
+  - "Dynamic usage patterns: reduce confidence by 25 points"
+  - "Exported code: no bonus (might be used externally)"
+  - "6+ references: exclude entirely (active code)"
+  rationale: "Very High confidence (90-100%) must be safely removable without review"
 
 execution_discipline:
   workflow_order:
-    rule: "Execute workflow phases IN SEQUENCE"
-    phases:
-      - "Phase 1: Static Analysis & Discovery"
-      - "Phase 2: Historical Analysis"
-      - "Phase 3: Confidence Scoring"
-      - "Phase 4: Output Generation & Validation"
-    violation: "DO NOT skip steps or reorder phases"
-  
-  step_completion:
-    rule: "Complete each step fully before moving to next"
-    approach:
-      - "Read the step requirements completely"
-      - "Execute the step exactly as specified"
-      - "Verify step completion before proceeding"
-      - "Store intermediate results for subsequent steps"
+    - "Phase 1: Static Analysis & Discovery"
+    - "Phase 2: Historical Analysis"
+    - "Phase 3: Confidence Scoring"
+    - "Phase 4: Output Generation & Validation"
+  rule: "Execute phases IN SEQUENCE - do not skip or reorder"
 
 quality_assurance:
   pre_output_checklist:
-    - "All confidence scores are 50-100"
-    - "All items meet min_confidence threshold (>= comparison)"
-    - "Summary counts match actual item counts"
-    - "All reasoning text is clear and includes score breakdown"
-    - "safe_to_remove flags align with min_confidence threshold"
-    - "All warnings are actionable and informative"
-    - "No duplicate items in output"
-  
-  never_proceed_without: "Passing ALL validation checks in Phase 4"
+    - "All scores 50-100"
+    - "All items meet min_confidence (>=)"
+    - "Summary counts match actual items"
+    - "Reasoning text includes score breakdown"
+    - "safe_to_remove aligns with min_confidence"
+  requirement: "Pass ALL validation checks before returning"
 
 error_handling:
-  approach: "Fix root causes, not symptoms"
-  principles:
-    - "Validate inputs before processing"
-    - "Handle errors gracefully with clear messages"
-    - "Add warnings for non-critical issues"
-    - "Never proceed with invalid data"
-    - "Always explain what went wrong and why"
-  
-  common_scenarios:
-    git_failures:
-      action: "Add warning to warnings array, use filesystem fallback for dates"
-      example: "Git history unavailable for file X, using filesystem modification time"
-    
-    parse_failures:
-      action: "Skip unparseable files, add warning"
-      example: "Failed to parse file Y, excluding from analysis"
-    
-    missing_files:
-      action: "Skip missing files, add warning"
-      example: "File Z not found, skipping"
-    
-    search_tool_failures:
-      action: "Report in warnings, continue with available data"
-      example: "Search failed for pattern W, reference count may be incomplete"
-
-success_metrics:
-  output_quality:
-    - "Solves the exact problem stated"
-    - "Follows the scoring methodology precisely"
-    - "Can be used immediately without modifications"
-    - "Includes appropriate error handling"
-    - "Is the simplest solution that works reliably"
-  
-  validation:
-    - "All counts are accurate and validated"
-    - "All thresholds are applied correctly with >= comparison"
-    - "All items are properly filtered and sorted"
-    - "Summary statistics match reality"
+  scenarios:
+    git_failures: "Add warning, use filesystem fallback for dates"
+    parse_failures: "Skip file, add warning"
+    missing_files: "Skip item, add warning"
+    search_failures: "Report in warnings, continue with available data"
+  principle: "Handle gracefully with clear messages"

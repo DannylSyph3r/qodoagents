@@ -1,315 +1,96 @@
 # UNDERTAKER AGENT - CONFIDENCE SCORING METHODOLOGY
-# Apply these rules precisely for every code element
 
-scoring_system:
-  description: "Mathematical formula for calculating confidence scores"
-  range: "50-100 (items below 50 are excluded as active code)"
+scoring_formula:
+  description: "base_score + reference_points + age_points + export_points - dynamic_penalty"
+  range: "50-100 (items below 50 excluded as active code)"
+  base_score: 50
+
+calculation_steps:
+  step_1_base:
+    value: 50
   
-  formula:
-    description: "base_score + reference_points + age_points + export_points - dynamic_penalty"
-    base_score: 50
-    max_score: 100
-    min_score: 50
-
-  step_by_step_calculation:
-    step_1_start_with_base:
-      value: 50
-      description: "Every item starts at 50% confidence"
-    
-    step_2_add_reference_points:
-      description: "Points based on how many times code is referenced"
-      
-      rules:
-        zero_references:
-          condition: "reference_count == 0"
-          points: "+50"
-          reasoning: "No usages found anywhere in codebase"
-        
-        one_or_two_references:
-          condition: "reference_count == 1 OR reference_count == 2"
-          points: "+30"
-          reasoning: "Very few usages, likely dead or nearly dead"
-        
-        three_to_five_references:
-          condition: "reference_count >= 3 AND reference_count <= 5"
-          points: "+15"
-          reasoning: "Some usage, but minimal"
-        
-        six_or_more_references:
-          condition: "reference_count >= 6"
-          action: "EXCLUDE this item entirely - it's active code"
-          reasoning: "Too many references to be considered dead code"
-      
-      examples:
-        - scenario: "0 references"
-          calculation: "50 (base) + 50 (zero refs) = 100 so far"
-        - scenario: "2 references"
-          calculation: "50 (base) + 30 (few refs) = 80 so far"
-        - scenario: "4 references"
-          calculation: "50 (base) + 15 (some refs) = 65 so far"
-        - scenario: "7 references"
-          calculation: "EXCLUDED - too many references"
-    
-    step_3_add_age_points:
-      description: "Points based on how long code has been untouched"
-      
-      rules:
-        very_old:
-          condition: "days_since_last_modified >= 180"
-          points: "+30"
-          reasoning: "Untouched for 6+ months"
-        
-        moderately_old:
-          condition: "days_since_last_modified >= 90 AND days_since_last_modified < 180"
-          points: "+20"
-          reasoning: "Untouched for 3-6 months"
-        
-        recently_modified:
-          condition: "days_since_last_modified < 90"
-          points: "+10"
-          reasoning: "Modified recently, less confident it's dead"
-      
-      examples:
-        - scenario: "365 days old"
-          calculation: "previous_score + 30 (very old)"
-        - scenario: "120 days old"
-          calculation: "previous_score + 20 (moderately old)"
-        - scenario: "45 days old"
-          calculation: "previous_score + 10 (recent)"
-    
-    step_4_add_export_points:
-      description: "Points based on whether code is internal or exported"
-      
-      rules:
-        internal_only:
-          condition: "is_exported == false"
-          points: "+15"
-          reasoning: "Internal code, can verify all usage within codebase"
-        
-        exported_public:
-          condition: "is_exported == true"
-          points: "+0"
-          reasoning: "Public API, might be used externally - no bonus"
-      
-      note: "Conservative approach - never give export bonus"
-      
-      examples:
-        - scenario: "Private function"
-          calculation: "previous_score + 15 (internal)"
-        - scenario: "Public export"
-          calculation: "previous_score + 0 (exported)"
-    
-    step_5_apply_dynamic_penalty:
-      description: "Penalty for potential runtime dynamic usage"
-      
-      rule:
-        condition: "potential_dynamic_usage == true"
-        points: "-25"
-        reasoning: "Code might be used through eval, reflection, or dynamic imports"
-      
-      examples:
-        - scenario: "eval() found nearby"
-          calculation: "previous_score - 25 (dynamic penalty)"
-        - scenario: "No dynamic patterns"
-          calculation: "previous_score - 0 (no penalty)"
-    
-    step_6_clamp_to_range:
-      description: "Ensure final score stays within valid range"
-      actions:
-        - "If score > 100: set score = 100"
-        - "If score < 50: EXCLUDE item (below threshold)"
-      
-      examples:
-        - scenario: "Calculated score = 105"
-          result: "Final score = 100"
-        - scenario: "Calculated score = 45"
-          result: "Item excluded from results"
-
-  confidence_tiers:
-    description: "Human-readable categorization of confidence scores"
-    
-    very_high:
-      range: "90-100%"
-      threshold: "confidence_score >= 90"
-      safety: "Safe for automated removal"
-      characteristics:
-        - "Zero references in codebase"
-        - "Untouched for 6+ months"
-        - "Not exported (internal only)"
-        - "No dynamic usage patterns"
-    
-    high:
-      range: "75-89%"
-      threshold: "confidence_score >= 75 AND confidence_score < 90"
-      safety: "Safe with quick review"
-      characteristics:
-        - "Zero references but modified recently"
-        - "OR 1-2 references with old code"
-    
-    medium:
-      range: "50-74%"
-      threshold: "confidence_score >= 50 AND confidence_score < 75"
-      safety: "Manual verification required"
-      characteristics:
-        - "Few references (1-3)"
-        - "Some age (3-6 months)"
-        - "Might be used dynamically"
-
-  special_cases:
-    unreachable_code:
-      description: "Code that appears after return/throw statements"
-      confidence_score: 100
-      confidence_tier: "very_high"
-      reasoning: "Unreachable code is guaranteed to never execute"
-      examples:
-        - "Lines after return statement in function"
-        - "Code after throw statement"
-        - "Code in if(false) blocks"
-
-reasoning_text_format:
-  description: "Generate clear explanations for confidence scores"
+  step_2_reference_points:
+    0_refs: "+50"
+    1_to_2_refs: "+30"
+    3_to_5_refs: "+15"
+    6_plus_refs: "EXCLUDE (active code)"
   
-  template: "{reference_count} references found. Last modified {days_since_last_modified} days ago. {export_status}. Score: {breakdown}."
+  step_3_age_points:
+    180_plus_days: "+30"
+    90_to_179_days: "+20"
+    under_90_days: "+10"
   
-  breakdown_format: "{ref_points} (refs) + {age_points} (age) + {export_points} (internal) - {dynamic_penalty} (dynamic) = {final_score}%"
+  step_4_export_points:
+    not_exported: "+15"
+    exported: "+0"
   
-  examples:
-    example_1:
-      scenario:
-        reference_count: 0
-        days_since_last_modified: 547
-        is_exported: false
-        potential_dynamic_usage: false
-      
-      calculation:
-        base: 50
-        references: "+50 (0 refs)"
-        age: "+30 (547 days)"
-        export: "+15 (internal)"
-        dynamic: "-0 (no dynamic)"
-        total: 145
-        clamped: 100
-      
-      reasoning: "0 references found. Last modified 547 days ago. Internal function not exported. Score: 50 (refs) + 30 (age) + 15 (internal) = 95%"
-    
-    example_2:
-      scenario:
-        reference_count: 2
-        days_since_last_modified: 120
-        is_exported: true
-        potential_dynamic_usage: false
-      
-      calculation:
-        base: 50
-        references: "+30 (2 refs)"
-        age: "+20 (120 days)"
-        export: "+0 (exported)"
-        dynamic: "-0 (no dynamic)"
-        total: 100
-      
-      reasoning: "2 references found. Last modified 120 days ago. Exported function. Score: 30 (refs) + 20 (age) + 0 (export) = 80%"
-    
-    example_3:
-      scenario:
-        reference_count: 1
-        days_since_last_modified: 45
-        is_exported: false
-        potential_dynamic_usage: true
-      
-      calculation:
-        base: 50
-        references: "+30 (1 ref)"
-        age: "+10 (45 days)"
-        export: "+15 (internal)"
-        dynamic: "-25 (dynamic usage detected)"
-        total: 80
-      
-      reasoning: "1 reference found. Last modified 45 days ago. Internal function not exported. Dynamic usage patterns detected. Score: 30 (refs) + 10 (age) + 15 (internal) - 25 (dynamic) = 80%"
+  step_5_dynamic_penalty:
+    has_dynamic_usage: "-25"
+    no_dynamic_usage: "-0"
+  
+  step_6_clamp:
+    - "If score > 100: score = 100"
+    - "If score < 50: EXCLUDE item"
+
+confidence_tiers:
+  very_high:
+    range: "90-100%"
+    rule: "confidence_score >= 90"
+    safety: "Safe for automated removal"
+  
+  high:
+    range: "75-89%"
+    rule: "confidence_score >= 75 AND confidence_score < 90"
+    safety: "Safe with quick review"
+  
+  medium:
+    range: "50-74%"
+    rule: "confidence_score >= 50 AND confidence_score < 75"
+    safety: "Manual verification required"
+
+special_cases:
+  unreachable_code:
+    score: 100
+    tier: "very_high"
+    reasoning: "Code after return/throw is guaranteed unreachable"
+
+reasoning_format:
+  template: "{ref_count} references. {days} days old. {export_status}. Score: {breakdown}"
+  breakdown: "{ref_pts} (refs) + {age_pts} (age) + {export_pts} (internal) - {dynamic_pts} (dynamic) = {final}%"
+  
+  example:
+    input:
+      reference_count: 0
+      days_since_last_modified: 547
+      is_exported: false
+      potential_dynamic_usage: false
+    calculation: "50 + 50 (0 refs) + 30 (547 days) + 15 (internal) = 100"
+    output: "0 references. 547 days old. Internal function. Score: 50 (refs) + 30 (age) + 15 (internal) = 95%"
 
 safe_to_remove_flag:
-  description: "Determine if item meets user's confidence threshold"
-  
-  rule: "Use >= comparison (greater than or equal to)"
-  
-  formula:
-    condition: "confidence_score >= min_confidence"
-    then: "safe_to_remove = true"
-    else: "safe_to_remove = false"
-  
-  critical: "NEVER use > (greater than only) - this would exclude items at exact threshold"
-  
+  rule: "Use >= comparison (include threshold value)"
+  formula: "safe_to_remove = (confidence_score >= min_confidence)"
+  critical: "NEVER use > (would exclude threshold)"
   examples:
-    - min_confidence: 75
-      item_score: 75
-      safe_to_remove: true
-      reasoning: "75 >= 75 is true"
-    
-    - min_confidence: 75
-      item_score: 76
-      safe_to_remove: true
-      reasoning: "76 >= 75 is true"
-    
-    - min_confidence: 75
-      item_score: 74
-      safe_to_remove: false
-      reasoning: "74 >= 75 is false"
+    - "min_confidence=75, score=75 → safe_to_remove=true"
+    - "min_confidence=75, score=74 → safe_to_remove=false"
 
-validation_requirements:
-  description: "Verify scoring was applied correctly"
-  
+validation:
   checks:
-    score_range:
-      rule: "All scores must be 50-100"
-      action: "Exclude items outside range"
-    
-    tier_assignment:
-      rules:
-        - condition: "score >= 90"
-          tier: "very_high"
-        - condition: "score >= 75 AND score < 90"
-          tier: "high"
-        - condition: "score >= 50 AND score < 75"
-          tier: "medium"
-      action: "Verify tier matches score"
-    
-    reasoning_completeness:
-      requirements:
-        - "Includes reference count"
-        - "Includes age in days"
-        - "Includes export status"
-        - "Shows score breakdown with points"
-      action: "Generate missing reasoning text"
-    
-    threshold_compliance:
-      rule: "Items must have score >= min_confidence"
-      action: "Exclude items below threshold"
+    - "All scores between 50-100"
+    - "All scores >= min_confidence"
+    - "Tier matches score (90+=very_high, 75-89=high, 50-74=medium)"
+    - "Reasoning includes reference count, age, export status, score breakdown"
+  
+  tier_assignment:
+    - "score >= 90 → very_high"
+    - "score >= 75 and < 90 → high"
+    - "score >= 50 and < 75 → medium"
 
-conservative_biases:
-  description: "Prioritize accuracy over aggressive removal"
-  
-  uncertainty_handling:
-    - "When uncertain about reference count: count conservatively (higher)"
-    - "When uncertain about export status: assume exported (no bonus)"
-    - "When uncertain about dynamic usage: apply penalty"
-  
-  edge_cases:
-    common_names:
-      examples: ["test", "data", "utils", "helper"]
-      approach: "Count references conservatively, expect higher counts"
-    
-    framework_patterns:
-      examples: ["React components", "dependency injection", "decorators"]
-      approach: "Look for framework-specific usage patterns"
-    
-    reflection_apis:
-      languages: ["Java", "Python", "Go", "Rust"]
-      approach: "Always apply dynamic usage penalty if reflection imports found"
-
-rationale:
-  goal: "Ensure Very High confidence findings (90-100%) can be safely removed without manual review"
-  
-  principles:
-    - "False positives are worse than false negatives"
-    - "Err on side of keeping code rather than removing"
-    - "High confidence must truly mean safe to remove"
-    - "Conservative scoring builds trust in the tool"
+conservative_approach:
+  - "Uncertain reference count: count higher (lower confidence)"
+  - "Uncertain export status: assume exported (no bonus)"
+  - "Uncertain dynamic usage: apply penalty"
+  - "Common names (test, data, utils): expect higher reference counts"
+  - "6+ references: always exclude (active code)"
+  rationale: "Very High confidence (90-100%) must be safely removable without review"
