@@ -2,16 +2,16 @@
 
 > Eliminate technical debt by safely identifying unused code with confidence scoring
 
-The Undertaker is a QODO agent that helps teams clean up codebases by identifying genuinely unused code through static analysis and historical validation. It combines multiple signals (reference counts, file age, git history, export status) to provide confidence-scored findings that can be safely removed without breaking functionality.
+The Undertaker is a Qodo agent that helps teams clean up codebases by identifying genuinely unused code. It analyzes your code to find functions, classes, and variables that are never used, combining static analysis with git history to provide confidence-scored findings that can be safely removed.
 
 ## Features
 
-- **Multi-Signal Analysis**: Combines static analysis, git history, and usage patterns for accurate detection
+- **Multi-Signal Analysis**: Combines code usage patterns with git history for accurate detection
 - **Confidence Scoring**: Every finding includes a 50-100% confidence score with clear reasoning
-- **Language Support**: JavaScript, TypeScript, Python, Go, Java, Rust, PHP, Ruby, Swift, Kotlin, C, C++, C#, and more
-- **Historical Validation**: Uses git blame and commit history to assess code staleness
+- **Multi-Language Support**: Works with JavaScript, TypeScript, Python, Go, Java, Rust, PHP, Ruby, C, C++, and more
+- **Cross-Platform**: Runs reliably on Windows, macOS, and Linux
 - **Smart Categorization**: Groups findings into Very High (90-100%), High (75-89%), and Medium (50-74%) confidence tiers
-- **PR Generation**: Automatically creates pull requests with dead code removals (optional)
+- **PR Generation**: Automatically creates pull requests with dead code removals
 - **Conservative Approach**: Prioritizes accuracy over aggressive removal to prevent false positives
 - **CI/CD Ready**: Structured output and exit conditions for automated workflows
 
@@ -23,7 +23,7 @@ The Undertaker is a QODO agent that helps teams clean up codebases by identifyin
 - **Dead Imports**: Import statements for modules that are never used
 - **Unreachable Code**: Code after return statements or in impossible conditional branches
 - **Write-Only Variables**: Variables that are assigned but never read
-- **Single-Use Functions**: Functions called exactly once (candidates for inlining)
+- **Commented Code**: Large blocks of commented-out code
 
 ## Installation
 
@@ -37,11 +37,15 @@ npm install -g @qodo/command
 
 ### Basic Usage
 
-Scan your codebase for dead code with default settings (75% minimum confidence, 90+ days old):
+Scan your codebase for dead code with default settings:
 
 ```bash
 qodo undertaker
 ```
+
+This will analyze your code and report any functions, classes, or variables with:
+- At least 75% confidence of being unused
+- No modifications in the last 90 days
 
 ### High Confidence Only
 
@@ -75,198 +79,276 @@ Preview what would be removed without creating a PR:
 qodo undertaker --set create_pr=true --set dry_run=true
 ```
 
-## Configuration Options
+## Configuration Parameters
 
-All configuration is done through the `--set` flag:
+### Basic Command Structure
 
-### Core Settings
-
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `min_confidence` | number | `75` | Minimum confidence score (50-100) to report. Items below this threshold are excluded as actively-used code. |
-| `min_age_days` | number | `90` | Minimum days since last modification. Code modified more recently is excluded. |
-| `file_extensions` | string | `"all"` | Comma-separated file extensions to analyze (e.g., `"js,ts,py,go,java,rs,php,rb,swift,kt"`). Use `"all"` for all code files. |
-| `exclude_patterns` | string | `"node_modules,dist,build,vendor,.git,test,spec"` | Comma-separated directory/file patterns to ignore. |
-| `include_test_files` | boolean | `false` | Include test files in analysis (usually excluded as test-only code is acceptable). |
-
-### PR Generation
-
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `create_pr` | boolean | `false` | Generate pull request with dead code removals (requires GitHub/GitLab access). |
-| `group_by_confidence` | boolean | `true` | Create separate PRs per confidence tier (very high, high, medium). |
-| `dry_run` | boolean | `false` | Preview PR content without actually creating it. |
-
-### Advanced Settings
-
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `max_items` | number | `1000` | Maximum dead code items to analyze per confidence tier (prevents overwhelming output). |
-
-## Understanding Confidence Scores
-
-The Undertaker assigns each finding a confidence score from 50-100% based on multiple factors:
-
-### Confidence Tiers
-
-- **Very High (90-100%)**: Safe for automated removal
-  - Zero references in codebase
-  - Untouched for 6+ months
-  - Not exported (internal only)
-  - No dynamic usage patterns detected
-
-- **High (75-89%)**: Safe for review
-  - Zero references but modified recently (≤3 months)
-  - OR 1-2 references and untouched for 6+ months
-
-- **Medium (50-74%)**: Manual verification required
-  - Few references (1-3)
-  - Some age (3-6 months)
-  - Might be used dynamically
-
-- **Below 50%**: Automatically excluded (active code, not dead)
-
-### Scoring Factors
-
-Each finding's confidence is calculated from:
-
-1. **Reference Count** (0-50 points):
-   - 0 references: +50 points
-   - 1-2 references: +30 points
-   - 3-5 references: +10 points
-   - 6+ references: Item excluded as active code
-
-2. **Age Multiplier** (10-30 points):
-   - 6+ months old: +30 points
-   - 3-6 months old: +20 points
-   - <3 months old: +10 points
-
-3. **Export Status** (0-15 points):
-   - Internal-only: +15 points
-   - Exported/public: +0 points
-
-4. **Dynamic Usage Penalty** (-25 points):
-   - Deduction if eval(), reflection, or dynamic imports detected
-
-## Output Format
-
-The Undertaker produces structured JSON output with:
-
-### Summary Statistics
-```json
-{
-  "summary": {
-    "total_files_scanned": 2847,
-    "total_dead_code_items": 156,
-    "very_high_confidence": 89,
-    "high_confidence": 51,
-    "medium_confidence": 16,
-    "estimated_lines_removable": 4231,
-    "oldest_dead_code_days": 542
-  }
-}
+```bash
+qodo undertaker [--set parameter=value] [--set parameter=value] ...
 ```
 
-### Detailed Findings
-Each dead code item includes:
-- `identifier`: Function/class/variable name
-- `type`: function, class, variable, import, or unreachable_code
-- `location`: File path and line numbers
-- `confidence_score`: 50-100 numerical score
-- `confidence_tier`: very_high, high, or medium
-- `metrics`: Reference count, age, last modified date, export status
-- `reasoning`: Human-readable explanation
-- `safe_to_remove`: Boolean flag based on min_confidence threshold
+### Available Parameters
 
-### Example Finding
-```json
-{
-  "identifier": "formatLegacyDate",
-  "type": "function",
-  "location": {
-    "file": "src/utils/date.ts",
-    "line_start": 47,
-    "line_end": 63
-  },
-  "confidence_score": 95,
-  "confidence_tier": "very_high",
-  "metrics": {
-    "reference_count": 0,
-    "days_since_last_modified": 542,
-    "last_modified_date": "2023-03-12",
-    "is_exported": false
-  },
-  "reasoning": "No references found anywhere in codebase. Last modified 18 months ago. Internal function not exported.",
-  "safe_to_remove": true
-}
+#### `min_confidence` (number, default: 75)
+
+Controls the minimum confidence score to report findings.
+
+- **Range**: 50-100
+- **Default**: 75
+- **Recommended values**:
+  - 90+ for automated cleanup (very high confidence only)
+  - 75-89 for manual review (high confidence)
+  - 50-74 for exploratory analysis (requires careful review)
+
+**Examples**:
+```bash
+# Only very high confidence items (safest)
+qodo undertaker --set min_confidence=90
+
+# Include high confidence items (recommended)
+qodo undertaker --set min_confidence=75
+
+# Include medium confidence (needs manual review)
+qodo undertaker --set min_confidence=60
 ```
 
-## Usage Examples
+#### `min_age_days` (number, default: 90)
 
-### Example 1: Initial Codebase Audit
+Minimum days since last modification to consider code as potentially dead.
 
-Start with very high confidence items to build trust:
+- **Default**: 90 (3 months)
+- **Recommended values**:
+  - 365+ (1+ year) for very old code only
+  - 180+ (6+ months) for conservative cleanup
+  - 90 (3+ months) for standard cleanup
+  - 30-60 for aggressive analysis
 
+**Examples**:
+```bash
+# Only very old code (1+ year)
+qodo undertaker --set min_age_days=365
+
+# Conservative (6+ months)
+qodo undertaker --set min_age_days=180
+
+# Standard (3+ months, default)
+qodo undertaker --set min_age_days=90
+```
+
+#### `file_extensions` (string, default: "all")
+
+Comma-separated list of file extensions to analyze.
+
+- **Default**: "all" (analyzes all common programming languages)
+
+**Examples**:
+```bash
+# JavaScript/TypeScript only
+qodo undertaker --set file_extensions="js,ts,tsx,jsx"
+
+# Python only
+qodo undertaker --set file_extensions="py"
+
+# Backend languages
+qodo undertaker --set file_extensions="go,rs,java"
+```
+
+#### `exclude_patterns` (string, default: "node_modules,dist,build,vendor,.git,test,spec")
+
+Comma-separated directory/file patterns to ignore.
+
+**Examples**:
+```bash
+# Next.js project
+qodo undertaker --set exclude_patterns="node_modules,dist,build,.next,out"
+
+# Rust project
+qodo undertaker --set exclude_patterns="node_modules,target,dist"
+
+# Custom exclusions
+qodo undertaker --set exclude_patterns="node_modules,.git,generated"
+```
+
+#### `include_test_files` (boolean, default: false)
+
+Whether to include test files in analysis.
+
+**Examples**:
+```bash
+# Include test files
+qodo undertaker --set include_test_files=true
+
+# Exclude test files (default)
+qodo undertaker --set include_test_files=false
+```
+
+#### `create_pr` (boolean, default: false)
+
+Generate pull request with dead code removals.
+
+- **Requires**: GitHub token (GITHUB_TOKEN) or GitLab token (GITLAB_TOKEN)
+
+**Examples**:
+```bash
+# Create PR with deletions
+qodo undertaker --set create_pr=true --set min_confidence=90
+
+# Just analyze, no PR (default)
+qodo undertaker
+```
+
+#### `group_by_confidence` (boolean, default: true)
+
+When creating PR, create separate PRs for each confidence tier.
+
+**Examples**:
+```bash
+# Separate PRs per tier (safer, default)
+qodo undertaker --set create_pr=true --set group_by_confidence=true
+
+# Single PR for all (faster review)
+qodo undertaker --set create_pr=true --set group_by_confidence=false
+```
+
+#### `dry_run` (boolean, default: false)
+
+Preview what would be removed without creating actual PR.
+
+**Examples**:
+```bash
+# Preview only
+qodo undertaker --set create_pr=true --set dry_run=true
+
+# Execute changes
+qodo undertaker --set create_pr=true --set dry_run=false
+```
+
+#### `max_items` (number, default: 1000)
+
+Maximum dead code items to analyze per confidence tier.
+
+**Examples**:
+```bash
+# Quick scan
+qodo undertaker --set max_items=100
+
+# Thorough analysis
+qodo undertaker --set max_items=5000
+```
+
+## Common Usage Patterns
+
+### Safe Cleanup (Recommended Starting Point)
+
+High confidence items, 6+ months old:
 ```bash
 qodo undertaker --set min_confidence=90 --set min_age_days=180
 ```
 
-This finds code that:
-- Has 90-100% confidence of being dead
-- Hasn't been touched in 6+ months
-- Is safe for automated removal
+### Preview Before Committing
 
-### Example 2: File Type-Specific Cleanup
-
-Focus on TypeScript files only:
-
+Test configuration without creating actual PR:
 ```bash
-qodo undertaker --set file_extensions="ts,tsx" --set min_confidence=85
+qodo undertaker --set create_pr=true --set dry_run=true --set min_confidence=85
 ```
 
-### Example 3: Aggressive Cleanup
+### Language-Specific Analysis
 
-Find all potential dead code (including medium confidence):
-
+Focus on specific programming language:
 ```bash
-qodo undertaker --set min_confidence=50 --set min_age_days=30
+# Python only
+qodo undertaker --set file_extensions="py" --set min_confidence=85
+
+# JavaScript/TypeScript
+qodo undertaker --set file_extensions="js,ts,jsx,tsx" --set min_confidence=80
+
+# Go and Rust
+qodo undertaker --set file_extensions="go,rs" --set min_confidence=90
 ```
 
-**Warning**: Medium confidence findings require manual review before removal.
+### Ancient Dead Code Only
 
-### Example 4: Generate Cleanup PR
-
-Create a pull request with very high confidence deletions:
-
+Find code untouched for over a year:
 ```bash
-qodo undertaker \
-  --set create_pr=true \
-  --set min_confidence=90 \
-  --set group_by_confidence=true
+qodo undertaker --set min_confidence=95 --set min_age_days=365 --set create_pr=true
 ```
 
-This creates separate PRs for each confidence tier (very high, high, medium).
+### Incremental Cleanup Strategy
 
-### Example 5: Include Test Files
-
-Analyze test files for unused test utilities:
-
+Clean up in phases, starting with highest confidence:
 ```bash
-qodo undertaker \
-  --set include_test_files=true \
-  --set exclude_patterns="node_modules,dist,build"
+# Phase 1: Very high confidence, 1+ year old
+qodo undertaker --set min_confidence=95 --set min_age_days=365
+
+# Phase 2: High confidence, 6+ months old
+qodo undertaker --set min_confidence=85 --set min_age_days=180
+
+# Phase 3: Medium confidence (manual review)
+qodo undertaker --set min_confidence=60 --set min_age_days=90
 ```
 
-### Example 6: Dry Run Preview
+### Framework-Specific Examples
 
-Preview what would be deleted without creating a PR:
-
+**Next.js project**:
 ```bash
-qodo undertaker \
-  --set create_pr=true \
-  --set dry_run=true \
-  --set min_confidence=85
+qodo undertaker --set file_extensions="js,ts,tsx" --set exclude_patterns="node_modules,.next,out,dist"
 ```
+
+**Rust project**:
+```bash
+qodo undertaker --set file_extensions="rs" --set exclude_patterns="target,dist"
+```
+
+**Django project**:
+```bash
+qodo undertaker --set file_extensions="py" --set exclude_patterns="venv,__pycache__,migrations,static"
+```
+
+## Understanding Confidence Scores
+
+The Undertaker assigns each finding a confidence score from 50-100% based on multiple factors.
+
+### Confidence Tiers
+
+**Very High (90-100%)** - Safe for automated removal
+- Zero references found in the codebase
+- Code hasn't been modified in 6+ months
+- Not exported (internal only)
+- No dynamic usage patterns detected
+
+**High (75-89%)** - Safe with quick review
+- Zero references but modified recently
+- OR 1-2 references and old code
+
+**Medium (50-74%)** - Manual verification required
+- Few references (1-3)
+- Some age (3-6 months)
+- Might be used dynamically
+
+**Below 50%** - Automatically excluded (active code)
+
+### What Affects Confidence Score
+
+**Reference Count** - How many times the code is used elsewhere:
+- 0 references: Highest confidence boost
+- 1-2 references: Medium confidence boost
+- 3-5 references: Low confidence boost
+- 6+ references: Excluded as active code
+
+**Code Age** - Time since last modification:
+- 6+ months: Highest confidence boost
+- 3-6 months: Medium confidence boost
+- Less than 3 months: Low confidence boost
+
+**Export Status** - Whether code is public:
+- Internal only: Confidence boost
+- Exported/public: No boost (might be used externally)
+
+**Dynamic Usage** - Patterns like eval(), reflection:
+- Detected: Confidence reduced
+- Not detected: No change
+
+**Special Case**: Unreachable code (after return/throw) automatically receives 100% confidence.
 
 ## CI/CD Integration
 
@@ -286,7 +368,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for git analysis
+          fetch-depth: 0  # Full history needed
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -297,11 +379,12 @@ jobs:
         run: npm install -g @qodo/command
 
       - name: Run Dead Code Detection
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           qodo undertaker \
             --set min_confidence=90 \
-            --set create_pr=true \
-            --ci
+            --set create_pr=true
 
       - name: Upload Analysis Report
         uses: actions/upload-artifact@v3
@@ -321,129 +404,37 @@ dead-code-detection:
     - |
       qodo undertaker \
         --set min_confidence=90 \
-        --set create_pr=true \
-        --ci
+        --set create_pr=true
   artifacts:
-    reports:
-      junit: dead-code-report.xml
     paths:
       - dead-code-analysis.json
   only:
     - schedules
 ```
 
-### Exit Conditions
-
-The agent exits successfully when:
-```
-success && (very_high_confidence > 0 || total_dead_code_items == 0)
-```
-
-This means:
-- ✅ **Pass**: Analysis completed AND (found very high confidence dead code OR codebase is clean)
-- ❌ **Fail**: Analysis encountered errors OR only uncertain findings that need manual review
-
-## Error Handling
-
-The Undertaker handles common issues gracefully:
+## Troubleshooting
 
 ### Missing Git History
 
-**Scenario**: No `.git` directory or corrupted history
+**Issue**: Warning about unavailable git history
 
-**Behavior**:
-- Reduces all confidence scores by 20 points
-- Continues analysis with static analysis only
-- Adds warning: "Git history unavailable - confidence scores reduced"
-
-### Unsupported Languages
-
-**Scenario**: User requests a language not in the supported list
-
-**Behavior**:
-- Adds language to `unsupported_languages` array
-- Continues analyzing supported languages
-- Logs warning listing which languages were skipped
-
-**Example**:
+**Solution**: Ensure you're in a git repository with full history:
 ```bash
-qodo undertaker --set languages="typescript,ruby,python"
-```
-Result: Analyzes TypeScript and Python, warns that Ruby is unsupported
-
-### Parse Failures
-
-**Scenario**: Syntax errors or malformed source files
-
-**Behavior**:
-- Logs file path to warnings array
-- Skips to next file
-- Continues analysis with remaining valid files
-
-### Permission Errors
-
-**Scenario**: Cannot read files or create PR
-
-**Behavior**:
-- Skips inaccessible files with warning
-- Returns analysis results even if PR creation fails
-
-### Scale Limits
-
-**Scenario**: Findings exceed `max_items` limit
-
-**Behavior**:
-- Prioritizes by confidence tier (very high → high → medium)
-- Processes top N items per tier
-- Warns: "Analysis limited to top {max_items} items per confidence tier"
-
-## Language Support
-
-The Undertaker uses language-agnostic analysis techniques that work across virtually any programming language. It adapts its parsing and reference detection based on the file extension and syntax patterns.
-
-**Works with**: JavaScript, TypeScript, Python, Go, Java, Rust, PHP, Ruby, Swift, Kotlin, C, C++, C#, Scala, Elixir, and any other language with standard function/class/variable syntax.
-
-The agent automatically:
-- Detects appropriate syntax patterns based on file extensions
-- Handles language-specific visibility rules (public/private, underscore conventions, capitalization)
-- Adapts to different import/export systems
-- Recognizes common dynamic patterns (reflection, eval, metaprogramming)
-
-## Troubleshooting
-
-### "Analysis completed but no dead code found"
-
-**Possible Causes**:
-1. Your codebase is genuinely clean (great!)
-2. `min_confidence` threshold is too high
-3. `min_age_days` is excluding recent dead code
-4. `exclude_patterns` is filtering out too much
-
-**Solution**: Lower thresholds or review exclude patterns:
-```bash
-qodo undertaker --set min_confidence=50 --set min_age_days=30
+git clone --depth=full <repository-url>
 ```
 
-### "Too many false positives"
+For CI/CD, use `fetch-depth: 0` in checkout actions.
 
-**Possible Causes**:
-1. Dynamic code patterns not detected
-2. Cross-package references in monorepo
-3. Reflection-based usage
+### PR Creation Failed
 
-**Solution**: Increase `min_confidence` or review medium/low confidence items manually:
-```bash
-qodo undertaker --set min_confidence=85
-```
+**Issue**: Cannot create pull request
 
-### "PR creation failed"
+**Common causes**:
+- Missing GitHub/GitLab token
+- Insufficient repository permissions
+- No items meet min_confidence threshold
 
-**Possible Causes**:
-1. Missing GitHub/GitLab access token
-2. Insufficient repository permissions
-3. No items meet min_confidence threshold
-
-**Solution**: Check environment variables and permissions:
+**Solution**: Set the required environment variable:
 ```bash
 # For GitHub
 export GITHUB_TOKEN=your_token_here
@@ -452,102 +443,175 @@ export GITHUB_TOKEN=your_token_here
 export GITLAB_TOKEN=your_token_here
 ```
 
-### "Parse errors for specific files"
+### Parse Errors
 
-**Possible Causes**:
-1. Syntax errors in source files
-2. Unsupported language dialect
-3. Generated/minified code
+**Issue**: Errors parsing specific files
 
-**Solution**: Add problematic directories to `exclude_patterns`:
+**Solution**: Add problematic directories to exclusions:
 ```bash
 qodo undertaker --set exclude_patterns="node_modules,dist,build,generated"
+```
+
+### No Results Found
+
+**Issue**: Agent reports no dead code found
+
+**Possible reasons**:
+- min_confidence threshold too high
+- min_age_days threshold too high
+- Codebase is genuinely clean
+
+**Solution**: Try lower thresholds:
+```bash
+qodo undertaker --set min_confidence=60 --set min_age_days=30
 ```
 
 ## Best Practices
 
 ### 1. Start Conservative
 
-Begin with very high confidence items to build trust:
+Begin with very high confidence items:
 ```bash
 qodo undertaker --set min_confidence=90 --set min_age_days=180
 ```
 
-### 2. Review Before Removing
+### 2. Always Preview First
 
-Always review findings before bulk deletion:
+Use dry run before creating actual PRs:
 ```bash
-qodo undertaker --set dry_run=true
+qodo undertaker --set create_pr=true --set dry_run=true
 ```
 
 ### 3. Test After Removal
 
-Run your full test suite after removing dead code:
+Always run your test suite after removing dead code:
 ```bash
-# Remove dead code
-qodo undertaker --set create_pr=true --set min_confidence=90
-
-# Then test thoroughly
+# After dead code is removed
 npm test
+# or
+python -m pytest
 ```
 
-### 4. Incremental Cleanup
+### 4. Clean Up Incrementally
 
-Clean up in phases, starting with oldest/highest confidence:
-```bash
-# Phase 1: Very high confidence, 1+ year old
-qodo undertaker --set min_confidence=95 --set min_age_days=365
-
-# Phase 2: High confidence, 6+ months old
-qodo undertaker --set min_confidence=85 --set min_age_days=180
-
-# Phase 3: Medium confidence (manual review)
-qodo undertaker --set min_confidence=60 --set min_age_days=90
-```
+Start with oldest, highest confidence code and work your way down:
+1. Very high confidence, 1+ year old
+2. High confidence, 6+ months old
+3. Medium confidence with manual review
 
 ### 5. Exclude Generated Code
 
-Always exclude auto-generated and vendored code:
+Always exclude auto-generated files:
 ```bash
 qodo undertaker --set exclude_patterns="node_modules,vendor,dist,build,.next,generated"
 ```
+
+### 6. Monitor False Positives
+
+If you encounter false positives:
+- Add those patterns to exclusions
+- Increase min_confidence threshold
+- Focus on older code with higher min_age_days
 
 ## Limitations
 
 ### What The Undertaker Cannot Detect
 
-- **Runtime-only usage**: Code called only through reflection, `eval()`, or dynamic imports
-- **External dependencies**: Usage from external packages or services
+The agent may not catch code that is used in these ways:
+
+- **Runtime-only usage**: Code called through reflection, eval(), or dynamic imports
+- **External usage**: Code used by external packages or services
 - **Conditional compilation**: Code used only in specific build configurations
-- **Plugin architectures**: Code loaded dynamically via plugin systems
-- **Configuration-driven**: Code referenced only in config files or annotations
+- **Plugin systems**: Code loaded dynamically at runtime
+- **Configuration-driven**: Code referenced only in config files
 
 ### When to Use Manual Review
 
-Use manual verification for:
-- Exported/public API functions (even if unused internally)
-- Code with medium confidence scores (50-74%)
-- Recently modified code (<3 months old)
-- Code in critical paths (authentication, payments, security)
-- Framework-specific patterns (React hooks, Spring beans)
+Always manually review findings for:
+
+- **Public APIs**: Exported functions even if unused internally
+- **Medium confidence** (50-74%): Requires verification
+- **Recent code** (less than 3 months old): May be in development
+- **Critical paths**: Authentication, payments, security code
+- **Framework patterns**: React hooks, dependency injection, decorators
 
 ## Comparison with Other Tools
 
-| Feature | The Undertaker | ESLint/Pylint | Coverage Tools | IDE "Find Usages" |
-|---------|----------------|---------------|----------------|-------------------|
-| Cross-file analysis | ✅ | ⚠️ Limited | ❌ | ✅ |
-| Historical context | ✅ | ❌ | ❌ | ❌ |
-| Confidence scoring | ✅ | ❌ | ❌ | ❌ |
-| Multi-language | ✅ 6 languages | Per-language | Per-language | Per-language |
-| PR generation | ✅ | ❌ | ❌ | ❌ |
-| CI/CD ready | ✅ | ✅ | ✅ | ❌ |
-| Age-based filtering | ✅ | ❌ | ❌ | ❌ |
+| Feature | The Undertaker | ESLint/Pylint | Coverage Tools | IDE Find Usages |
+|---------|----------------|---------------|----------------|-----------------|
+| Cross-file analysis | Yes | Limited | No | Yes |
+| Historical context | Yes | No | No | No |
+| Confidence scoring | Yes | No | No | No |
+| Multi-language | 10+ languages | Per-language | Per-language | Per-language |
+| PR generation | Yes | No | No | No |
+| CI/CD integration | Yes | Yes | Yes | No |
+| Age-based filtering | Yes | No | No | No |
+| Cross-platform | Yes | Yes | Yes | Limited |
 
 The Undertaker complements existing tools by providing:
 - Deeper cross-file analysis than linters
-- Historical context that coverage tools don't have
+- Historical context that coverage tools lack
 - Automated PR creation for cleanup
 - Confidence-based prioritization
+
+## Output Format
+
+The agent returns structured JSON with:
+
+```json
+{
+  "summary": {
+    "total_files_scanned": 150,
+    "total_dead_code_items": 23,
+    "very_high_confidence": 15,
+    "high_confidence": 6,
+    "medium_confidence": 2,
+    "estimated_lines_removable": 487,
+    "oldest_dead_code_days": 547
+  },
+  "dead_code_items": [
+    {
+      "identifier": "unusedFunction",
+      "type": "function",
+      "location": {
+        "file": "src/utils.js",
+        "line_start": 42,
+        "line_end": 55
+      },
+      "confidence_score": 95,
+      "confidence_tier": "very_high",
+      "metrics": {
+        "reference_count": 0,
+        "days_since_last_modified": 547,
+        "last_modified_date": "2024-03-15",
+        "is_exported": false
+      },
+      "reasoning": "No references found in codebase. Last modified 547 days ago (18 months). Internal function not exported.",
+      "safe_to_remove": true
+    }
+  ],
+  "warnings": [],
+  "success": true
+}
+```
+
+## Supported Languages
+
+The Undertaker analyzes code in:
+
+- JavaScript (.js, .jsx)
+- TypeScript (.ts, .tsx)
+- Python (.py)
+- Go (.go)
+- Java (.java)
+- Rust (.rs)
+- PHP (.php)
+- Ruby (.rb)
+- C/C++ (.c, .cpp, .h, .hpp)
+- Swift (.swift)
+- Kotlin (.kt)
+
+And more through pattern-based detection.
 
 ## Contributing
 
@@ -555,7 +619,7 @@ The Undertaker is part of the [Qodo Agents](https://github.com/qodo-ai/agents) p
 
 To suggest improvements:
 1. Open an issue describing the enhancement
-2. Submit a pull request with implementation
+2. Submit a pull request with changes
 3. Include tests and documentation updates
 
 ## Support
@@ -570,6 +634,6 @@ MIT License - see [LICENSE](../../LICENSE) for details
 
 ---
 
-**Built with ❤️ by the Qodo community**
+**Built with the Qodo community**
 
 *The Undertaker: Because every codebase deserves a proper burial for its dead code.*
