@@ -1,22 +1,24 @@
-# The Undertaker — Dead Code Detection Agent
+# 🪦 The Undertaker — Dead Code Detection Agent
 
-> Safely find and prioritize dead code so teams can clean up confidently.
+> Safely find and prioritize unused or unreachable code with deterministic confidence scoring.
 
-The Undertaker analyzes a repository to discover unused functions, classes, variables, imports, and unreachable code, then returns confidence-scored findings to guide safe removal.
-
----
-
-## Quick Features
-
-* Multi-language: JS/TS, Python, Go, Java, Rust, PHP, Ruby, C/C++, Swift, Kotlin, etc.
-* Confidence scores (50–100%) with three tiers: Very High, High, Medium.
-* Optional PR generation (opt-in).
-* CI/CD friendly JSON output.
-* Conservative defaults to reduce false positives.
+The Undertaker analyzes your repository to detect **functions, classes, variables, imports, types, enums**, and **unreachable code** that appear unused or obsolete.
+It returns **structured, confidence-scored JSON output** for human review or CI enforcement.
 
 ---
 
-## Install
+## 🚀 Key Features
+
+* Multi-language: JS/TS, Python, Go, Java, C/C++, Rust, PHP, Ruby, Swift, Kotlin, and more.
+* **Deterministic confidence scoring** (same input → same output).
+* **Three modes:** `preview`, `analyze`, and `strict` for flexible depth and CI use.
+* Confidence tiers: **Very High**, **High**, **Medium** (50–100%).
+* **JSON-only output** — no file writes, no mutations.
+* CI/CD and PR-automation friendly.
+
+---
+
+## ⚙️ Installation
 
 ```bash
 npm install -g @qodo/command
@@ -24,85 +26,106 @@ npm install -g @qodo/command
 
 ---
 
-## Basic Commands
+## 🧭 Basic Usage
 
-Scan the repo (defaults):
+### Default quick scan
 
 ```bash
 qodo undertaker
 ```
 
-Limit to TypeScript + Python:
+### Restrict by language
 
 ```bash
 qodo undertaker --set file_extensions="ts,tsx,py"
 ```
 
-Only very-high confidence:
+### Raise confidence threshold
 
 ```bash
 qodo undertaker --set min_confidence=90
 ```
 
-Create a PR (opt-in):
+## 🧩 Operational Modes
+
+| Mode        | Confidence Filter | Validation Strictness |                     Output Behavior | Recommended Use      |
+| ----------- | ----------------- | --------------------- | ----------------------------------: | -------------------- |
+| **preview** | ≥ 70              | Soft                  |         Shows warnings, never fails | Local inspection     |
+| **analyze** | ≥ 50              | Medium                |         Full dataset + all warnings | Code review & audits |
+| **strict**  | ≥ 80              | Hard                  | Stops on mismatch or invalid totals | CI/CD enforcement    |
+
+Example:
 
 ```bash
-qodo undertaker --set create_pr=true --set min_confidence=90
-```
-
-Preview PRs without creating them:
-
-```bash
-qodo undertaker --set create_pr=true --set dry_run=true
+qodo undertaker --set mode=strict
 ```
 
 ---
 
-## Key Options (short)
+## 🎯 Key Arguments
 
-* `min_confidence` (default: `75`) — Report items with score **≥** this value.
-* `min_age_days` (default: `90`) — Optional bias toward older code.
-* `file_extensions` (default: `all`) — Comma list of extensions.
-* `exclude_patterns` — Comma list of paths to ignore.
-* `include_test_files` (default: `false`) — Include tests in analysis.
-* `create_pr`, `dry_run`, `group_by_confidence`, `max_items`.
-
----
-
-## How Scoring Works (user summary)
-
-Each finding gets a **confidence score (50–100%)** and a tier:
-
-* **Very High (90–100%)** — Highly likely unused; safe to remove after review.
-* **High (75–89%)** — Likely unused; good candidate for quick review.
-* **Medium (50–74%)** — Might be unused; requires manual verification.
-
-Scores are derived from repository signals (reference counts, export/public status, age, and indicators of dynamic usage). Unreachable code (e.g., after `return`) is typically scored highest.
+* `min_confidence` (number, default `75`) — Minimum confidence score (50–100) to report (use `≥` comparison).
+* `file_extensions` (string, default `all`) — Comma-separated file extensions (e.g., `"js,ts,py"`).
+* `exclude_patterns` (string) — Comma-separated paths to skip (default: `node_modules,dist,build,vendor,.git,test,spec`).
+* `mode` (string, default `preview`) — `preview`, `analyze`, or `strict`. Influences filtering/validation and logs.
+* `max_items` (number, default `1000`) — Maximum number of findings to report.
 
 ---
 
-## Output Example (trimmed)
+## 🧮 Confidence Mapping (deterministic)
+
+|                   Condition | Exported | Confidence |    Tier   |
+| --------------------------: | :------: | ---------: | :-------: |
+|        **Unreachable code** |     —    |        100 | Very High |
+|       `reference_count = 0` |   false  |         98 | Very High |
+|       `reference_count = 0` |   true   |         92 | Very High |
+|       `reference_count = 1` |   false  |         86 |    High   |
+|       `reference_count = 1` |   true   |         76 |    High   |
+|       `reference_count = 2` |   false  |         83 |    High   |
+|       `reference_count = 2` |   true   |         77 |    High   |
+| `reference_count ∈ [3,4,5]` |    any   |         65 |   Medium  |
+|       `reference_count ≥ 6` |    any   |    Exclude |     —     |
+
+* `safe_to_remove = (confidence_score ≥ min_confidence)`
+* Exported items automatically get `needs_manual_approval = true`.
+* Items with `confidence_score < 50` are excluded.
+
+---
+
+## 🧠 How It Works (simplified)
+
+1. **Discovery:** Detect definitions (functions, classes, variables, imports, types, enums) using lightweight syntax heuristics per language.
+2. **Canonical reference count:** For each identifier run ONE canonical `ripgrep` query; ignore definition lines; dedupe unique file+line matches; filter comments/strings. Final `reference_count = max(0, unique_matches - 1)`.
+3. **Export analysis:** Detect exported / public items (JS/TS exports, `module.exports`, Python `__all__`, header/extern declarations, etc.).
+4. **Unreachable detection:** Find structural patterns where code follows terminating statements (`return`, `throw`, `raise`, `break`, `continue`, `exit`) and mark them `unreachable_code` with `100` confidence.
+5. **Scoring & dedupe:** Apply deterministic mapping, merge duplicates (aggregate references, note `merged_from_count`), and compute tiers.
+6. **Validation:** Ensure counts and summary fields are internally consistent; produce warnings for anomalies (many comment-only matches, potential dynamic usage, merged duplicates).
+
+---
+
+## 🧾 Example Output (trimmed)
 
 ```json
 {
   "summary": {
-    "total_files_scanned": 120,
-    "total_dead_code_items": 12,
-    "very_high_confidence": 7,
+    "total_files_scanned": 122,
+    "total_dead_code_items": 11,
+    "very_high_confidence": 6,
     "high_confidence": 4,
     "medium_confidence": 1,
-    "estimated_lines_removable": 210
+    "estimated_lines_removable": 180
   },
   "dead_code_items": [
     {
-      "identifier": "unusedFunction",
+      "identifier": "oldHelper",
       "type": "function",
-      "location": { "file": "src/utils.js", "line_start": 42, "line_end": 55 },
-      "confidence_score": 95,
+      "location": { "file": "src/utils/helpers.ts", "line_start": 41, "line_end": 58 },
+      "confidence_score": 98,
       "confidence_tier": "very_high",
       "metrics": { "reference_count": 0, "is_exported": false },
-      "reasoning": "No references found; internal utility last changed >1 year ago.",
-      "safe_to_remove": true
+      "reasoning": "No references found; internal utility last modified 14 months ago.",
+      "safe_to_remove": true,
+      "needs_manual_approval": false
     }
   ],
   "warnings": [],
@@ -112,41 +135,28 @@ Scores are derived from repository signals (reference counts, export/public stat
 
 ---
 
-## Getting Started (recommended)
+## 🧭 Getting Started (recommended)
 
 1. Install Qodo Command.
-2. Run a baseline scan: `qodo undertaker`.
-3. Review `very_high` items first.
-4. Preview PRs: `--set create_pr=true --set dry_run=true`.
-5. Apply changes incrementally and run tests.
+2. Run a base scan:
+
+   ```bash
+   qodo undertaker
+   ```
+3. Review `very_high` confidence results first.
+---
+
+## ⚠️ Limitations
+
+Undertaker may under-detect or under-rank code used dynamically (reflection, plugin systems, dynamically-generated imports, runtime dispatch). Always manually review exported APIs, `medium` items, and critical core paths before removal.
 
 ---
 
-## CI Snippet (GitHub Actions)
+## 🤝 Contributing & Support
 
-```yaml
-steps:
-  - uses: actions/checkout@v4
-    with: { fetch-depth: 0 }
-  - run: npm install -g @qodo/command
-  - run: qodo undertaker --set min_confidence=90 --set create_pr=true
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+* Repo & Issues: [https://github.com/qodo-ai/agents](https://github.com/qodo-ai/agents)
+* Docs: [https://docs.qodo.ai/qodo-documentation/qodo-command](https://docs.qodo.ai/qodo-documentation/qodo-command)
 
 ---
 
-## Limitations
-
-May under-detect or under-score code used via reflection, dynamic imports, external consumers, plugin systems, or build-time conditional compilation. Always manually review exported APIs, medium-confidence items, recent code, and critical paths.
-
----
-
-## Contributing & Support
-
-Repo & issues: [https://github.com/qodo-ai/agents](https://github.com/qodo-ai/agents)
-Docs: [https://docs.qodo.ai/qodo-documentation/qodo-command](https://docs.qodo.ai/qodo-documentation/qodo-command)
-
----
-
-*The Undertaker — because every codebase deserves a careful, reviewable cleanup.*
+*“The Undertaker — because every codebase deserves a careful, reviewable cleanup.”*
