@@ -1,4 +1,4 @@
-# 🪦 The Undertaker — Dead Code Detection Agent
+# The Undertaker — Dead Code Detection Agent
 
 > Safely find and prioritize unused or unreachable code with deterministic confidence scoring.
 
