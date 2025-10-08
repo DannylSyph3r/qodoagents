@@ -1,46 +1,95 @@
 # The Undertaker - Dead Code Detection Agent
-version = "1.0"
+version = "1.3"
 
 [commands.undertaker]
-description = "Find unused code with confidence scoring"
+description = "Find unused code with deterministic confidence scoring (dedupe, refs, exported review)"
 
 instructions = """
-You are a dead code detection agent. Your task is to identify unused functions, classes, variables, and other code elements.
+You are a dead code detection agent. Identify unused functions, classes, variables, imports, types, enums, and unreachable code blocks using static patterns, not literal text.
 
-HOW TO ANALYZE:
-1. Use ripgrep to search for code elements (functions, classes, variables, interfaces, types, enums)
-2. For each element found, count how many times it appears in the codebase using ripgrep
-3. Get file modification dates using git_log tool to see when code was last changed
-4. Assign confidence scores based on usage patterns and code age
+MANDATES (strict)
+- CRITICAL: DO NOT WRITE TO ANY FILES UNDER ANY CIRCUMSTANCES.
+- Output results only as JSON matching output_schema. No file creation or modification.
+- Use only the provided tools (ripgrep, git, filesystem) and return findings in the conversation.
 
-CONFIDENCE SCORING:
-Assign confidence based on these factors:
-- Reference count: Fewer references = higher confidence it's unused
-- Age: Older code = higher confidence it's dead
-- Export status: Internal code (not exported) = higher confidence
+ANALYSIS FLOW (canonical, concise)
+1. Discovery: For each file matching file_extensions (or all if 'all'), identify candidate definitions:
+   - Typical definition patterns: function/class/variable/interface/type/enum/import keywords.
+   - Use lightweight pattern heuristics per language (e.g., ^def, ^function, class, const/let/var).
+   - Record each identifier’s name, type, and location range.
 
-Confidence Tiers:
-- Very High (90-100%): No references, not exported, older code
-- High (75-89%): Few references (1-2), or exported but unused
-- Medium (50-74%): Some references (3-5), or very recent code
+2. Canonical reference count:
+   - For each discovered identifier, run ONE canonical ripgrep search across the repo.
+   - Exclude its definition line (definitions do not count as references).
+   - Count UNIQUE matches (file + line), filtering out duplicates and comments/strings.
+   - Example filter rules: ignore lines starting with // or #, or containing the identifier inside quotes.
+   - Final reference_count = max(0, unique_matches - 1).
+   - Apply the same canonical logic for all identifiers for determinism.
 
-Exclude items with 6+ references - they're likely active code.
+3. Export/public status:
+   - Determine if the item is exported or globally visible via language-specific markers:
+     - JS/TS: export/module.exports
+     - Python: __all__, public imports
+     - C/C++: extern, header declarations
+   - Set is_exported = true when found.
 
-IMPORTANT RULES:
-- Make your confidence_score match what you describe in reasoning
-- Use >= comparison for min_confidence threshold (e.g., 75 includes 75, 76, 77...)
-- Count validation: very_high + high + medium must equal total_dead_code_items
-- Prefer git dates over filesystem dates (git shows when code was committed)
+4. Unreachable code detection:
+   - Detect structural patterns where code appears after a terminating statement within the same block:
+     - Examples: return, raise, break, continue, throw, exit, or process termination calls.
+   - Use regex heuristics such as:
+     - `return\\s*;?\\s*\\n\\s*\\S`
+     - `throw\\s+[^;]+;\\s*\\n\\s*\\S`
+     - `raise\\s+[^\\n]+\\n\\s*\\S`
+   - Report such sections as type = "unreachable_code" with confidence_score = 100.
 
-OUTPUT FORMAT:
-Return JSON matching the output_schema with all findings organized by confidence level.
+5. Deduplication & merging:
+   - Dedupe by (identifier, type, canonical_file_path).
+   - If duplicates exist across scopes, keep them separate.
+   - When merging duplicates, aggregate references and note merged_from_count.
+
+NORMALIZATION RULES
+- Unreachable code uses type = "unreachable_code" only.
+- For all others, assign accurate type labels ("function", "class", "variable", etc.).
+- Exported items that are safe_to_remove must set needs_manual_approval = true.
+
+DETERMINISTIC CONFIDENCE MAPPING
+- unreachable_code: 100 (very_high)
+- reference_count = 0:
+  * is_exported = false -> 98
+  * is_exported = true  -> 92
+- reference_count = 1:
+  * is_exported = false -> 86
+  * is_exported = true  -> 76
+- reference_count = 2:
+  * is_exported = false -> 83
+  * is_exported = true  -> 77
+- reference_count in [3,4,5] -> 65 (medium)
+- reference_count >= 6 -> EXCLUDE (assume active code)
+
+DERIVED RULES
+- Identical metrics map to the same confidence_score.
+- safe_to_remove = (confidence_score >= min_confidence).
+- Exported items also set needs_manual_approval = true.
+- Exclude confidence < 50.
+
+OUTPUT VALIDATION
+- summary.total_dead_code_items == length(dead_code_items).
+- Confidence counts add up correctly (very_high + high + medium == total_dead_code_items).
+- Include warnings[] for anomalies (e.g., dynamic references, comment filtering, merged items).
+- estimated_lines_removable = sum(line_end - line_start + 1) for all items.
+
+BRIEF EXAMPLES
+- Unreachable:
+  function f(){ return; console.log('x'); } -> type: "unreachable_code", confidence_score:100
+- Internal unused:
+  function g(){} -> reference_count:0, is_exported:false -> confidence:98
+- Exported unused:
+  export function h(){} -> reference_count:0, is_exported:true -> confidence:92, needs_manual_approval:true
 """
 
 arguments = [
-    { name = "min_confidence", type = "number", required = false, default = 75, 
-      description = "Minimum confidence score (50-100) to report" },
-    { name = "min_age_days", type = "number", required = false, default = 90,
-      description = "Minimum days since last modification to report" },
+    { name = "min_confidence", type = "number", required = false, default = 75,
+      description = "Minimum confidence score (50-100) to report; use >= comparison" },
     { name = "file_extensions", type = "string", required = false, default = "all",
       description = "File extensions to analyze (e.g., 'js,ts,py'). 'all' for all languages" },
     { name = "exclude_patterns", type = "string", required = false, default = "node_modules,dist,build,vendor,.git,test,spec",
@@ -64,34 +113,12 @@ output_schema = """
       "type": "object",
       "required": ["total_files_scanned", "total_dead_code_items", "very_high_confidence", "high_confidence", "medium_confidence"],
       "properties": {
-        "total_files_scanned": {
-          "type": "number",
-          "description": "Number of source files analyzed"
-        },
-        "total_dead_code_items": {
-          "type": "number",
-          "description": "Total dead code items found"
-        },
-        "very_high_confidence": {
-          "type": "number",
-          "description": "Count of very high confidence items (90-100%)"
-        },
-        "high_confidence": {
-          "type": "number",
-          "description": "Count of high confidence items (75-89%)"
-        },
-        "medium_confidence": {
-          "type": "number",
-          "description": "Count of medium confidence items (50-74%)"
-        },
-        "estimated_lines_removable": {
-          "type": "number",
-          "description": "Estimated lines that can be removed"
-        },
-        "oldest_dead_code_days": {
-          "type": "number",
-          "description": "Age in days of oldest dead code"
-        }
+        "total_files_scanned": { "type": "number", "description": "Number of source files analyzed" },
+        "total_dead_code_items": { "type": "number", "description": "Total dead code items found" },
+        "very_high_confidence": { "type": "number", "description": "Count of very high confidence items (90-100%)" },
+        "high_confidence": { "type": "number", "description": "Count of high confidence items (75-89%)" },
+        "medium_confidence": { "type": "number", "description": "Count of medium confidence items (50-74%)" },
+        "estimated_lines_removable": { "type": "number", "description": "Estimated lines that can be removed" }
       }
     },
     "dead_code_items": {
@@ -101,10 +128,7 @@ output_schema = """
         "type": "object",
         "required": ["identifier", "type", "location", "confidence_score", "confidence_tier", "metrics", "reasoning", "safe_to_remove"],
         "properties": {
-          "identifier": {
-            "type": "string",
-            "description": "Name of the code element"
-          },
+          "identifier": { "type": "string", "description": "Name of the code element" },
           "type": {
             "type": "string",
             "enum": ["function", "class", "variable", "interface", "type", "enum", "import", "unreachable_code"],
@@ -114,75 +138,47 @@ output_schema = """
             "type": "object",
             "required": ["file", "line_start", "line_end"],
             "properties": {
-              "file": {
-                "type": "string",
-                "description": "File path relative to repository root"
-              },
-              "line_start": {
-                "type": "number",
-                "description": "Starting line number"
-              },
-              "line_end": {
-                "type": "number",
-                "description": "Ending line number"
-              }
+              "file": { "type": "string", "description": "File path relative to repository root" },
+              "line_start": { "type": "number", "description": "Starting line number" },
+              "line_end": { "type": "number", "description": "Ending line number" }
             }
           },
-          "confidence_score": {
-            "type": "number",
-            "minimum": 50,
-            "maximum": 100,
-            "description": "Confidence this is dead code (50-100)"
-          },
-          "confidence_tier": {
-            "type": "string",
-            "enum": ["very_high", "high", "medium"],
-            "description": "Confidence tier"
-          },
+          "confidence_score": { "type": "number", "minimum": 50, "maximum": 100, "description": "Confidence this is dead code (50-100)" },
+          "confidence_tier": { "type": "string", "enum": ["very_high", "high", "medium"], "description": "Confidence tier" },
           "metrics": {
             "type": "object",
-            "required": ["reference_count", "days_since_last_modified", "last_modified_date", "is_exported"],
+            "required": ["reference_count", "is_exported"],
             "properties": {
-              "reference_count": {
-                "type": "number",
-                "description": "Number of times referenced in codebase"
+              "reference_count": { "type": "number", "description": "Number of times referenced in codebase (canonical count, definition excluded)" },
+              "is_exported": { "type": "boolean", "description": "Whether code is exported from its module" },
+              "references": {
+                "type": "array",
+                "description": "Canonical list of reference locations (file + line) used to compute count",
+                "items": {
+                  "type": "object",
+                  "required": ["file", "line"],
+                  "properties": {
+                    "file": { "type": "string" },
+                    "line": { "type": "number" }
+                  }
+                }
               },
-              "days_since_last_modified": {
-                "type": "number",
-                "description": "Days since code was last changed"
-              },
-              "last_modified_date": {
-                "type": "string",
-                "description": "Last modification date (YYYY-MM-DD)"
-              },
-              "is_exported": {
-                "type": "boolean",
-                "description": "Whether code is exported from its module"
-              }
+              "merged_from_count": { "type": "number", "description": "If merged from duplicates, how many were merged (optional)" },
+              "externally_used_possible": { "type": "boolean", "description": "Optional hint if item may be used externally (best-effort)" }
             }
           },
-          "reasoning": {
-            "type": "string",
-            "description": "Explanation of confidence score"
-          },
-          "safe_to_remove": {
-            "type": "boolean",
-            "description": "Whether item meets min_confidence threshold"
-          }
+          "reasoning": { "type": "string", "description": "Explanation of confidence score; mention if any filters or dedupe occurred" },
+          "safe_to_remove": { "type": "boolean", "description": "Whether item meets min_confidence threshold" },
+          "needs_manual_approval": { "type": "boolean", "description": "Whether human approval is recommended (exports, external consumers)" }
         }
       }
     },
     "warnings": {
       "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "Warnings encountered during analysis"
+      "items": { "type": "string" },
+      "description": "Warnings encountered during analysis (dedupe, filtering, heuristic notes)"
     },
-    "success": {
-      "type": "boolean",
-      "description": "Whether analysis completed successfully"
-    }
+    "success": { "type": "boolean", "description": "Whether analysis completed successfully" }
   }
 }
 """
