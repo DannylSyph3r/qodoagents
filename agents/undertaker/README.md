@@ -66,7 +66,7 @@ qodo undertaker --set mode=strict
 
 * `min_confidence` (number, default `75`) — Minimum confidence score (50–100) to report (use `≥` comparison).
 * `file_extensions` (string, default `all`) — Comma-separated file extensions (e.g., `"js,ts,py"`).
-* `exclude_patterns` (string) — Comma-separated paths to skip (default: `node_modules,dist,build,vendor,.git,test,spec`).
+* `exclude_patterns` (string) — Comma-separated paths to skip (default: `node_modules,dist,build,vendor,.git,test,spec,venv,env,__pycache__,bin,obj,target`).
 * `mode` (string, default `preview`) — `preview`, `analyze`, or `strict`. Influences filtering/validation and logs.
 * `max_items` (number, default `1000`) — Maximum number of findings to report.
 
@@ -76,14 +76,14 @@ qodo undertaker --set mode=strict
 
 |                   Condition | Exported | Confidence |    Tier   |
 | --------------------------: | :------: | ---------: | :-------: |
-|        **Unreachable code** |     —    |        100 | Very High |
-|       `reference_count = 0` |   false  |         98 | Very High |
-|       `reference_count = 0` |   true   |         92 | Very High |
-|       `reference_count = 1` |   false  |         86 |    High   |
-|       `reference_count = 1` |   true   |         76 |    High   |
-|       `reference_count = 2` |   false  |         83 |    High   |
-|       `reference_count = 2` |   true   |         77 |    High   |
-| `reference_count ∈ [3,4,5]` |    any   |         65 |   Medium  |
+|        **Unreachable code** |     —    |        100 | very_high |
+|       `reference_count = 0` |   false  |        100 | very_high |
+|       `reference_count = 0` |   true   |         90 | very_high |
+|       `reference_count = 1` |   false  |         75 |    high   |
+|       `reference_count = 1` |   true   |         70 |    high   |
+|       `reference_count = 2` |   false  |         65 |   medium  |
+|       `reference_count = 2` |   true   |         60 |   medium  |
+| `reference_count ∈ [3,5]`   |    any   |         55 |   medium  |
 |       `reference_count ≥ 6` |    any   |    Exclude |     —     |
 
 * `safe_to_remove = (confidence_score ≥ min_confidence)`
@@ -120,7 +120,7 @@ qodo undertaker --set mode=strict
       "identifier": "oldHelper",
       "type": "function",
       "location": { "file": "src/utils/helpers.ts", "line_start": 41, "line_end": 58 },
-      "confidence_score": 98,
+      "confidence_score": 100,
       "confidence_tier": "very_high",
       "metrics": { "reference_count": 0, "is_exported": false },
       "reasoning": "No references found; internal utility last modified 14 months ago.",
@@ -140,7 +140,7 @@ qodo undertaker --set mode=strict
 1. Install Qodo Command.
 2. Run a base scan:
 
-   ```bash
+   ```bash:disable-run
    qodo undertaker
    ```
 3. Review `very_high` confidence results first.
@@ -160,3 +160,4 @@ Undertaker may under-detect or under-rank code used dynamically (reflection, plu
 ---
 
 *“The Undertaker — because every codebase deserves a careful, reviewable cleanup.”*
+```
