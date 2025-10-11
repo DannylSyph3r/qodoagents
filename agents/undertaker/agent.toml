@@ -1,5 +1,5 @@
 # The Undertaker - Dead Code Detection Agent
-version = "1.4"
+version = "1.0"
 
 [commands.undertaker]
 description = "Find unused code with deterministic confidence scoring (dedupe, refs, exported review)"

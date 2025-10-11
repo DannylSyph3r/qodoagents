@@ -1,4 +1,4 @@
-version: "1.4"
+version: "1.0"
 
 commands:
   undertaker:
@@ -9,99 +9,98 @@ commands:
 
       MANDATES (strict)
       - CRITICAL: DO NOT WRITE TO ANY FILES UNDER ANY CIRCUMSTANCES.
-      - Output results only as JSON matching output_schema. No file creation or modification.
+      - Output results as a single, clean JSON object to the terminal/conversation matching the output_schema exactly. No file creation, modification, or extraneous text.
       - Use only the provided tools (ripgrep, git, filesystem) and return findings in the conversation.
+      - Return a single JSON object with summary, dead_code_items array, warnings array, and success boolean.
+      - CROSS-PLATFORM REQUIREMENT: This agent must work on Windows, Mac, and Linux. Use simple, portable regex patterns. When using ripgrep, avoid complex alternation patterns with shell-reserved keywords. Prefer multiple simple searches over one complex pattern.
 
       ANALYSIS FLOW (canonical, concise)
       0. Project Setup: Recursively list files and directories (filesystem/git) excluding exclude_patterns and build an in-memory project structure. Use that structure to identify files to scan, avoid generated folders, and guide orphaned-file detection.
 
       1. Discovery: For each file matching file_extensions (or all if 'all'), identify candidate definitions:
-         - Typical definition patterns: function/class/method/variable/interface/type/enum/import keywords.
-         - Use lightweight heuristics per language (e.g., ^def, ^function, ^class, ^const/let/var).
-         - Record each identifier's name, type, file path, and start/end lines.
-         - Prioritize: dead methods on used classes, exported-but-unused functions, public methods never invoked, and cross-file import-only patterns (A exports, B imports but never uses).
+          - Typical definition patterns: function/class/method/variable/interface/type/enum/import keywords.
+          - RULE: Use simple, platform-agnostic heuristics per language (e.g., ^def, ^function, ^class, ^const/let/var).
+          - REGEX SIMPLICITY REQUIREMENTS:
+            * Use literal string searches when possible instead of complex regex
+            * Prefer multiple simple searches over one complex alternation pattern
+            * Example: Search for "function " then "class " separately, NOT "(function|class)"
+            * Avoid patterns with shell-reserved keywords without proper escaping
+          - Record each identifier's name, type, file path, and start/end lines.
+          - Prioritize: dead methods on used classes, exported-but-unused functions, public methods never invoked, and cross-file import-only patterns (A exports, B imports but never uses).
 
       2. Canonical reference count:
-         - For each discovered identifier run ONE canonical ripgrep search across the repo.
-         - Exclude its definition line(s) from counts.
-         - Count UNIQUE matches by (file + line), filtering duplicates, comments, and strings.
-         - Improved filter rules: ignore lines starting with //, #, --, /*, *, or SQL-style comments; ignore inline trailing comments; ignore matches wholly inside single/double/backtick quotes.
-         - Final reference_count = max(0, unique_matches - 1).
-         - Use same canonical logic for all identifiers for determinism.
+          - For each discovered identifier run ONE canonical ripgrep search across the repo.
+          - CRITICAL CROSS-PLATFORM REGEX RULES:
+            * Use SIMPLE patterns only - avoid complex alternation with keywords (function|class|const)
+            * NEVER use patterns with unescaped keywords that shells interpret as commands
+            * BAD EXAMPLE: "export\\s+(const|function|class)" - will fail on Windows
+            * GOOD EXAMPLE: "export\\s+const" then "export\\s+function" as separate searches
+            * If you need multiple patterns, run multiple simple searches instead of one complex pattern
+          - Exclude its definition line(s) from counts.
+          - Count UNIQUE matches by (file + line), filtering duplicates, comments, and strings.
+          - Improved filter rules: ignore lines starting with //, #, --, /*, *, or SQL-style comments; ignore inline trailing comments; ignore matches wholly inside single/double/backtick quotes.
+          - Final reference_count = max(0, unique_matches - 1).
 
       3. Export/public status:
-         - Detect exported/public/global visibility via language markers:
-           - JS/TS: export, module.exports, export default
-           - Python: __all__, explicit top-level imports, public naming
-           - C/C++: extern, header declarations
-         - Set is_exported = true when found. Treat clearly public methods as exported.
+          - Detect exported/public/global visibility via language markers (e.g., export, module.exports, __all__).
+          - Set is_exported = true when found. Treat clearly public methods as exported.
 
       4. Unreachable code detection:
-         - Detect code after terminating statements in the same block: return, raise, break, continue, throw, exit, process termination calls.
-         - Use regex heuristics such as:
-           - `return\s*;?\s*\n\s*\S`
-           - `throw\s+[^;]+;\s*\n\s*\S`
-           - `raise\s+[^\\n]+\n\s*\S`
-         - Report those sections as type = "unreachable_code" with confidence_score = 100.
+          - Detect code after terminating statements in the same block: return, raise, break, continue, throw, exit.
+          - Report those sections as type = "unreachable_code" with confidence_score = 100.
 
       5. Orphaned files detection:
-         - For each scanned file, check if it is referenced (imported/required/included) elsewhere using general regex: `(import|require|from|include)\s*['"<\.\/]*basename['">]` excluding self-matches.
-         - If no such matches AND all identifiers inside file have reference_count = 0, report an item:
-           - type = "file", identifier = basename, location = file (line_start=1, line_end=total_lines), confidence_score = 85, is_exported = false.
-         - Exclude common entry points (main.*, index.*, app.*, server.*, cli entrypoints) from orphaned-file reporting.
+          - For each scanned file, check if it is referenced (imported/required/included) elsewhere.
+          - If no references AND all identifiers inside have reference_count = 0, report as type = "file".
+          - Exclude common entry points (main.*, index.*, app.*, server.*) from orphaned-file reporting.
 
       6. Deduplication & merging:
-         - Dedupe by (identifier, type, canonical_file_path).
-         - Keep duplicates across scopes separate; when merging, aggregate references and set merged_from_count.
-         - If many dead items cover most of a file (best-effort line-coverage), suggest merging into a single type="file" entry.
-
-      NORMALIZATION RULES
-      - Unreachable code uses type = "unreachable_code" only.
-      - Assign accurate type labels: "function", "class", "method", "variable", "interface", "type", "enum", "import", "file", "unreachable_code".
-      - Exported items that are safe_to_remove must set needs_manual_approval = true.
-
-      MODE BEHAVIOR (explicit)
-      - preview: ignore confidence < 70; report those as warnings only.
-      - analyze: include all items with confidence >= 50; aggregate warnings.
-      - strict: ignore confidence < 80; fail validation on summary mismatches.
+          - Dedupe by (identifier, type, canonical_file_path).
+          - If many dead items cover most of a file, suggest merging into a single type="file" entry.
+          - MANDATORY: Combine ALL dead code items into a SINGLE dead_code_items array for output.
 
       DETERMINISTIC CONFIDENCE MAPPING
       - unreachable_code: 100 (very_high)
-      - reference_count = 0 (very clear dead code):
+      - reference_count = 0:
         * is_exported = false -> 100 (very_high)
         * is_exported = true  -> 90 (very_high)
-      - reference_count = 1 (possible comment or single usage):
+      - reference_count = 1:
         * is_exported = false -> 75 (high)
         * is_exported = true  -> 70 (high)
-      - reference_count = 2 (limited usage):
+      - reference_count = 2:
         * is_exported = false -> 65 (medium)
         * is_exported = true  -> 60 (medium)
-      - reference_count in [3,5] (dynamic patterns possible) -> 55 (medium)
+      - reference_count in [3,5] -> 55 (medium)
       - reference_count >= 6 -> EXCLUDE (assume active code)
 
-      DERIVED RULES
-      - Identical metrics map to the same confidence_score.
-      - safe_to_remove = (confidence_score >= min_confidence).
-      - Exported items also set needs_manual_approval = true.
-      - Exclude confidence < 50.
+      ## OUTPUT VALIDATION REQUIREMENTS
 
-      OUTPUT VALIDATION
-      - summary.total_dead_code_items == length(dead_code_items).
-      - Confidence counts add up correctly (very_high + high + medium == total_dead_code_items).
-      - Include warnings[] for anomalies (dynamic references, comment filtering edge-cases, merging notes).
-      - estimated_lines_removable = sum(line_end - line_start + 1) for all items.
+      MANDATORY - Before returning results, you MUST validate and fix the output to match the schema.
+      1.  **Final JSON Structure:** The final output MUST be a single, valid JSON object. No extra text, logs, or comments outside the JSON structure.
+      2.  **Summary Object:** The `summary` object MUST contain EXACTLY these fields and nothing more:
+          - `total_files_scanned` (number)
+          - `total_dead_code_items` (number)
+          - `very_high_confidence` (number) - NOTE THE NAME: not "very_high_confidence_count".
+          - `high_confidence` (number) - NOTE THE NAME: not "high_confidence_count".
+          - `medium_confidence` (number) - NOTE THE NAME: not "medium_confidence_count".
+          - `estimated_lines_removable` (number)
+          - DO NOT include `mode`, `min_confidence`, `scanned_paths`, or `exclude_patterns` in the summary. Move any such contextual information to the `warnings` array if necessary.
+      3.  **Count Consistency:** The following equations MUST be true:
+          - `summary.total_dead_code_items` MUST equal `dead_code_items.length`.
+          - `summary.very_high_confidence` + `summary.high_confidence` + `summary.medium_confidence` MUST equal `summary.total_dead_code_items`.
+      4.  **Dead Code Items Array:** The `dead_code_items` array must be a clean list of objects.
+          - Each object MUST have all required fields as defined in `output_schema`: `identifier`, `type`, `location`, `confidence_score`, `confidence_tier`, `metrics`, `reasoning`, `safe_to_remove`, `needs_manual_approval`.
+          - Ensure there are no duplicates, malformed, or incomplete objects in the array.
+      5.  **Schema Compliance:** Confirm the entire JSON object adheres strictly to the `output_schema`. No extra or missing fields.
 
-      BRIEF EXAMPLES
-      - Unreachable:
-        function f(){ return; console.log('x'); } -> type: "unreachable_code", confidence_score:100
-      - Internal unused:
-        function g(){} -> reference_count:0, is_exported:false -> confidence:100
-      - Exported unused:
-        export function h(){} -> reference_count:0, is_exported:true -> confidence:90, needs_manual_approval:true
-      - Imported unused:
-        import { helper } from './A'; // never used -> type: "import", confidence:100 if ref=0
-      - Orphaned file:
-        file.js with no imports elsewhere and all internal dead -> type: "file", confidence:85
+      ## Error Handling
+
+      WHEN ripgrep patterns fail (especially on Windows), follow these steps:
+      1. Add a warning to the warnings array explaining the failure.
+      2. Fall back to reading files directly with the filesystem tool.
+      3. Parse identifiers manually from file contents.
+      4. Continue analysis with available data.
+      5. DO NOT fail the entire analysis - mark success=true with warnings.
 
     arguments:
       - name: min_confidence
@@ -145,7 +144,8 @@ commands:
         "properties": {
           "summary": {
             "type": "object",
-            "required": ["total_files_scanned", "total_dead_code_items", "very_high_confidence", "high_confidence", "medium_confidence"],
+            "description": "Summary statistics of the dead code analysis",
+            "required": ["total_files_scanned", "total_dead_code_items", "very_high_confidence", "high_confidence", "medium_confidence", "estimated_lines_removable"],
             "properties": {
               "total_files_scanned": { "type": "number", "description": "Number of source files analyzed" },
               "total_dead_code_items": { "type": "number", "description": "Total dead code items found" },
@@ -160,7 +160,8 @@ commands:
             "description": "List of dead code items sorted by confidence score (highest first)",
             "items": {
               "type": "object",
-              "required": ["identifier", "type", "location", "confidence_score", "confidence_tier", "metrics", "reasoning", "safe_to_remove"],
+              "description": "Single dead code item with full analysis details",
+              "required": ["identifier", "type", "location", "confidence_score", "confidence_tier", "metrics", "reasoning", "safe_to_remove", "needs_manual_approval"],
               "properties": {
                 "identifier": { "type": "string", "description": "Name of the code element" },
                 "type": {
@@ -170,6 +171,7 @@ commands:
                 },
                 "location": {
                   "type": "object",
+                  "description": "File location and line range of the dead code element",
                   "required": ["file", "line_start", "line_end"],
                   "properties": {
                     "file": { "type": "string", "description": "File path relative to repository root" },
@@ -181,25 +183,11 @@ commands:
                 "confidence_tier": { "type": "string", "enum": ["very_high", "high", "medium"], "description": "Confidence tier" },
                 "metrics": {
                   "type": "object",
+                  "description": "Detailed metrics about code usage and export status",
                   "required": ["reference_count", "is_exported"],
                   "properties": {
                     "reference_count": { "type": "number", "description": "Number of times referenced in codebase (canonical count, definition excluded)" },
-                    "is_exported": { "type": "boolean", "description": "Whether code is exported from its module" },
-                    "references": {
-                      "type": "array",
-                      "description": "Canonical list of reference locations (file + line) used to compute count",
-                      "items": {
-                        "type": "object",
-                        "required": ["file", "line"],
-                        "properties": {
-                          "file": { "type": "string" },
-                          "line": { "type": "number" }
-                        }
-                      }
-                    },
-                    "merged_from_count": { "type": "number", "description": "If merged from duplicates, how many were merged (optional)" },
-                    "externally_used_possible": { "type": "boolean", "description": "Optional hint if item may be used externally (best-effort)" },
-                    "reference_from_import_only": { "type": "boolean", "description": "True if references are only import/require statements (no usage)" }
+                    "is_exported": { "type": "boolean", "description": "Whether code is exported from its module" }
                   }
                 },
                 "reasoning": { "type": "string", "description": "Explanation of confidence score; mention if any filters or dedupe occurred" },
